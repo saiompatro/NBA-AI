@@ -40,8 +40,9 @@ desktop.ini
 .env.*
 !.env.example
 
-# Data artifacts — screenshots and local visual diagnostics
+# Data artifacts — local visual diagnostics (exclude all PNGs except the README screenshot)
 data/*.png
+!data/dashboard-screenshot.png
 
 # Trained model artifacts (regenerate with: python scripts/train_models.py)
 # Comment these out if you want to ship pre-trained weights with the repo
