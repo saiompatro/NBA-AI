@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>NBA Live Predictor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=18" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary">
+        <a class="brand" href="#/">
+          <span class="brand-ball" aria-hidden="true">NBA</span>
+          <strong>NBA <span>Live</span> Predictor</strong>
+        </a>
+
+        <nav class="side-nav">
+          <a class="side-link" href="#/live" data-nav="live">
+            <span class="nav-icon signal-icon" aria-hidden="true"></span>
+            <span>Live</span>
+          </a>
+          <a class="side-link active" href="#/table" data-nav="table">
+            <span class="nav-icon trophy-icon" aria-hidden="true"></span>
+            <span>Table</span>
+          </a>
+          <a class="side-link" href="#/players" data-nav="players">
+            <span class="nav-icon player-icon" aria-hidden="true"></span>
+            <span>Players</span>
+          </a>
+          <a class="side-link" href="#/teams" data-nav="teams">
+            <span class="nav-icon team-icon" aria-hidden="true"></span>
+            <span>Teams</span>
+          </a>
+          <span class="nav-divider"></span>
+          <a class="side-link" href="#/alerts" data-nav="alerts">
+            <span class="nav-icon bell-icon" aria-hidden="true"></span>
+            <span>Alerts</span>
+          </a>
+          <a class="side-link" href="#/predictions" data-nav="predictions">
+            <span class="nav-icon chart-icon" aria-hidden="true"></span>
+            <span>Predictions</span>
+          </a>
+          <a class="side-link" href="#/settings" data-nav="settings">
+            <span class="nav-icon gear-icon" aria-hidden="true"></span>
+            <span>Settings</span>
+          </a>
+        </nav>
+
+        <div class="season-picker">
+          <span>NBA Season 2025-26</span>
+          <strong>Playoffs</strong>
+        </div>
+      </aside>
+
+      <main class="content-shell">
+        <header class="topbar">
+          <div class="mobile-brand">
+            <span class="brand-ball" aria-hidden="true">NBA</span>
+            <strong>NBA <span>Live</span> Predictor</strong>
+          </div>
+          <div class="topbar-status">
+            <span>Data updated: <strong id="dataUpdated">--</strong></span>
+            <span class="live-chip"><i></i>Live Data</span>
+            <button class="icon-button" id="themeButton" type="button" aria-label="Toggle display mode"></button>
+            <button class="icon-button settings-button" type="button" aria-label="Settings"></button>
+          </div>
+        </header>
+
+        <section class="page active" id="dashboardPage">
+          <section class="kpi-grid" id="kpiGrid"></section>
+
+          <section class="dashboard-grid">
+            <article class="panel standings-panel">
+              <div class="panel-heading">
+                <h2>Playoff Standings</h2>
+              </div>
+              <div class="segmented" role="tablist" aria-label="Conference selector">
+                <button class="segment active" type="button" data-conference="Eastern">Eastern Conference</button>
+                <button class="segment" type="button" data-conference="Western">Western Conference</button>
+              </div>
+              <div class="table-wrap">
+                <table class="standings-table">
+                  <thead>
+                    <tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>PCT</th><th>GB</th><th>STRK</th></tr>
+                  </thead>
+                  <tbody id="standingsBody"></tbody>
+                </table>
+              </div>
+              <a class="panel-link" href="#/standings">View Full Standings <span aria-hidden="true">-></span></a>
+            </article>
+
+            <article class="panel schedule-panel">
+              <div class="panel-heading">
+                <h2>Upcoming Games</h2>
+                <span id="scheduleDate">Schedule</span>
+              </div>
+              <div id="upcomingList" class="game-list"></div>
+              <a class="panel-link" href="#/predictions">View Full Schedule <span aria-hidden="true">-></span></a>
+            </article>
+
+            <article class="panel live-panel">
+              <div class="panel-heading">
+                <h2>Live Status</h2>
+              </div>
+              <div id="liveStatusBody" class="live-empty"></div>
+            </article>
+
+            <article class="panel leaders-panel">
+              <div class="panel-heading">
+                <h2>Top Performers <span>(Season Leaders)</span></h2>
+              </div>
+              <div class="leader-tabs" role="tablist" aria-label="Leader category">
+                <button class="leader-tab active" type="button" data-leader="pts">PTS</button>
+                <button class="leader-tab" type="button" data-leader="reb">REB</button>
+                <button class="leader-tab" type="button" data-leader="ast">AST</button>
+                <button class="leader-tab" type="button" data-leader="stl">STL</button>
+                <button class="leader-tab" type="button" data-leader="blk">BLK</button>
+              </div>
+              <div id="leadersList" class="leaders-list"></div>
+              <a class="panel-link" href="#/players">View All Leaders <span aria-hidden="true">-></span></a>
+            </article>
+
+            <article class="panel spotlight-panel" id="spotlightPanel"></article>
+
+            <article class="panel team-form-panel">
+              <div class="panel-heading">
+                <h2>Team Form Overview <span>(Last 10 Games)</span></h2>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr><th>Team</th><th>W-L</th><th>PCT</th><th>OFF RTG</th><th>DEF RTG</th><th>NET RTG</th><th>STRK</th></tr>
+                  </thead>
+                  <tbody id="teamFormBody"></tbody>
+                </table>
+              </div>
+              <a class="panel-link" href="#/teams">View Full Team Analytics <span aria-hidden="true">-></span></a>
+            </article>
+
+            <article class="panel sentiment-panel">
+              <div class="panel-heading">
+                <h2>Social Sentiment <span>(Last 7 Days)</span></h2>
+              </div>
+              <div id="sentimentBody" class="sentiment-layout"></div>
+              <a class="panel-link" href="#/alerts">View Sentiment Analytics <span aria-hidden="true">-></span></a>
+            </article>
+          </section>
+        </section>
+
+        <section class="page" id="livePage"></section>
+        <section class="page" id="tablePage">
+          <div class="page-heading">
+            <div>
+              <h1>Playoff Table</h1>
+              <p>Only 2026 NBA playoff teams are included.</p>
+            </div>
+          </div>
+          <div id="fullStandings" class="conference-grid"></div>
+        </section>
+
+        <section class="page" id="playersPage">
+          <div class="page-heading">
+            <div>
+              <h1>Players</h1>
+              <p>Starting 5 and bench rotations for every playoff team.</p>
+            </div>
+            <select id="playerTeamFilter" aria-label="Filter players by team"></select>
+          </div>
+          <div id="playersGrid" class="player-grid"></div>
+        </section>
+
+        <section class="page" id="teamsPage">
+          <div class="page-heading">
+            <div>
+              <h1>Teams</h1>
+              <p>Playoff profiles, records, form, rotation, and model signals.</p>
+            </div>
+          </div>
+          <div id="teamsGrid" class="team-grid"></div>
+        </section>
+
+        <section class="page" id="teamDetailPage"></section>
+        <section class="page" id="playerDetailPage"></section>
+        <section class="page" id="alertsPage"></section>
+        <section class="page" id="predictionsPage"></section>
+        <section class="page" id="settingsPage"></section>
+
+        <footer class="footer-note">
+          Predictions and analytics are generated using machine learning models and public NBA data feeds. They should not be considered 100% accurate.
+        </footer>
+      </main>
+    </div>
+
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}?v=18"></script>
+  </body>
+</html>

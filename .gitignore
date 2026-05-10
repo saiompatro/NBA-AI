@@ -1,0 +1,52 @@
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Distribution / build
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Logs
+*.log
+server.log
+server.err.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Data artifacts — screenshots and local visual diagnostics
+data/*.png
+
+# Trained model artifacts (regenerate with: python scripts/train_models.py)
+# Comment these out if you want to ship pre-trained weights with the repo
+# data/shot_quality_xgb.joblib
+# data/win_probability.pt
+
+# Training data
+# data/synthetic_shot_quality_training.csv
