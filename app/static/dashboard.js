@@ -283,7 +283,12 @@ function renderLivePage() {
   const events = snapshot?.events || [];
   const homeWin = Math.round(Number(snapshot?.home_win_probability || 0) * 100);
   const awayWin = Math.round(Number(snapshot?.away_win_probability || 0) * 100);
+  const rawHomeWin = Math.round(Number(snapshot?.raw_home_win_probability || snapshot?.home_win_probability || 0) * 100);
   const shotQuality = Math.round(Number(snapshot?.shot_quality || model.shot_quality || 0) * 100);
+  const homeOut = snapshot?.home_players_out || [];
+  const awayOut = snapshot?.away_players_out || [];
+  const hasUnavailable = homeOut.length > 0 || awayOut.length > 0;
+  const isAdjusted = hasUnavailable && Math.abs(homeWin - rawHomeWin) >= 1;
 
   if (!snapshot) {
     els.livePage.innerHTML = `
@@ -343,19 +348,36 @@ function renderLivePage() {
         </div>
       </article>
       <article class="panel">
-        <div class="panel-heading"><h2>Win Probability</h2><span>Model output</span></div>
+        <div class="panel-heading">
+          <h2>Win Probability</h2>
+          <span>${isAdjusted ? `<span class="impact-badge">impact-adjusted</span>` : "Model output"}</span>
+        </div>
         <div class="probability-row"><span>${html(snapshot.away_team)}</span><div><i style="width:${awayWin}%"></i></div><strong>${awayWin}%</strong></div>
         <div class="probability-row"><span>${html(snapshot.home_team)}</span><div><i style="width:${homeWin}%"></i></div><strong>${homeWin}%</strong></div>
+        ${isAdjusted ? `<p class="prob-adjustment-note">Raw model: ${100 - rawHomeWin}% / ${rawHomeWin}% &rarr; adjusted for unavailable players</p>` : ""}
         <div class="shot-quality-meter">
           <span>Shot Quality</span>
           <strong>${shotQuality}%</strong>
           <div><i style="width:${shotQuality}%"></i></div>
         </div>
       </article>
+      ${hasUnavailable ? `
+      <article class="panel unavailable-panel">
+        <div class="panel-heading"><h2>Players Unavailable</h2><span>Ejections / Foul-outs / Injuries</span></div>
+        <div class="unavailable-list">
+          ${[...homeOut.map((p) => ({...p, team: snapshot.home_team})), ...awayOut.map((p) => ({...p, team: snapshot.away_team}))].map((p) => `
+            <div class="unavailable-row">
+              <span class="unavail-team">${html(p.team)}</span>
+              <span class="unavail-name">${html(p.name)}</span>
+              <span class="unavail-reason">${html(p.reason)}</span>
+            </div>
+          `).join("")}
+        </div>
+      </article>` : ""}
       <article class="panel">
         <div class="panel-heading"><h2>Play-by-Play Events</h2><span>${html(model.source || snapshot.source)}</span></div>
         <div class="event-list">
-          ${events.map((event) => `<div class="event-row">${html(event)}</div>`).join("")}
+          ${events.map((event) => `<div class="event-row ${event.startsWith("[News]") ? "event-news" : ""}">${html(event)}</div>`).join("")}
         </div>
       </article>
       <article class="panel">

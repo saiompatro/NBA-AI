@@ -24,8 +24,8 @@ def create_app() -> Flask:
     shot_model = ShotQualityModel()
     shot_quality_service = ShotQualityService(shot_model)
     win_model = WinProbabilityModel()
-    feed = NBALiveFeed(shot_quality_service, win_model)
     analytics = LeagueAnalyticsService()
+    feed = NBALiveFeed(shot_quality_service, win_model, analytics_service=analytics)
     app.config["LIVE_FEED"] = feed
     app.config["SHOT_MODEL"] = shot_model
     app.config["ANALYTICS"] = analytics
