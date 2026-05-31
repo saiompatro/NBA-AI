@@ -1,10 +1,32 @@
 from __future__ import annotations
 
+import json
+import logging
 import math
 import time
+import urllib.request
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_NBA_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nba.com/",
+    "Origin": "https://www.nba.com",
+}
+
+_SCOREBOARD_URL = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
+_PLAYBYPLAY_URL = "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{game_id}.json"
+
+
+def _nba_get(url: str, timeout: int = 10) -> dict:
+    req = urllib.request.Request(url, headers=_NBA_HEADERS)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read())
 
 from app.models.win_probability import WinProbabilityModel
 from app.services.injury_news_watch import InjuryNewsWatch
@@ -123,14 +145,26 @@ class NBALiveFeed:
 
     def _try_live_snapshot(self) -> GameSnapshot | None:
         try:
-            from nba_api.live.nba.endpoints import playbyplay, scoreboard
+            games = _nba_get(_SCOREBOARD_URL).get("scoreboard", {}).get("games", [])
+        except Exception as exc:
+            logger.error("Failed to fetch NBA scoreboard: %s", exc, exc_info=True)
+            return None
 
-            board = scoreboard.ScoreBoard(timeout=4)
-            games = board.get_dict().get("scoreboard", {}).get("games", [])
-            active = [game for game in games if int(game.get("gameStatus") or 1) == 2]
-            if not active:
-                return None
+        def _is_live(game: dict) -> bool:
+            try:
+                if int(game.get("gameStatus") or 0) == 2:
+                    return True
+            except (TypeError, ValueError):
+                pass
+            # Fallback: check status text for live-game keywords
+            text = (game.get("gameStatusText") or "").lower()
+            return any(kw in text for kw in ("qtr", "half", " ot", "overtime"))
 
+        active = [g for g in games if _is_live(g)]
+        if not active:
+            return None
+
+        try:
             game = active[0]
             home = game["homeTeam"]
             away = game["awayTeam"]
@@ -144,12 +178,13 @@ class NBALiveFeed:
             home_team_id = str(home.get("teamId", ""))
             away_team_id = str(away.get("teamId", ""))
 
-            actions = (
-                playbyplay.PlayByPlay(game_id=game_id, timeout=4)
-                .get_dict()
-                .get("game", {})
-                .get("actions", [])
-            )
+            try:
+                pbp_data = _nba_get(_PLAYBYPLAY_URL.format(game_id=game_id))
+                actions = pbp_data.get("game", {}).get("actions", [])
+            except Exception as exc:
+                logger.warning("Play-by-play fetch failed for %s: %s", game_id, exc)
+                actions = []
+
             possession = self._possession(actions, home, away)
             score_diff = home_score - away_score
             remaining = _time_remaining(period, clock)
@@ -174,9 +209,10 @@ class NBALiveFeed:
                 away_fouls=int(away.get("fouls", 0) or 0),
                 shot_quality_model=shot_quality.as_dict(),
                 actions=actions,
-                source="nba_api live scoreboard + play-by-play",
+                source="NBA CDN live scoreboard + play-by-play",
             )
-        except Exception:
+        except Exception as exc:
+            logger.error("Failed to build live snapshot: %s", exc, exc_info=True)
             return None
 
     def _build_snapshot(

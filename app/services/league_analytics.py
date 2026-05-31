@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
 from math import exp
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -12,9 +14,52 @@ import urllib3
 from nba_api.stats.library.http import NBAStatsHTTP
 
 from app.services import news_sources
+from app.services.injury_news_watch import InjuryNewsWatch
 
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+# ---------------------------------------------------------------------------
+# Pre-game ("normal") prediction calibration
+# ---------------------------------------------------------------------------
+# The pre-game model maps team strength to a win probability via:
+#     expected_home_margin = (home_net - away_net) + home_court_advantage
+#                            - home_injury_points + away_injury_points
+#     P(home win)          = sigmoid(expected_home_margin / scale)
+#
+# `home_court_advantage` and `scale` are *fit against real game results* by
+# scripts/calibrate_pregame.py and written to data/pregame_calibration.json.
+# The defaults below are standard basketball-analytics values so the model
+# still works sensibly before calibration has ever been run.
+_CALIBRATION_PATH = Path("data/pregame_calibration.json")
+_DEFAULT_CALIBRATION = {"home_court_advantage": 2.8, "scale": 11.5}
+
+# Injury adjustment: convert a player's season IMPACT score into points of
+# game margin, capped so a single team can never swing more than a few points.
+_IMPACT_TO_POINTS = 0.12       # a ~30-impact star out ≈ 3.6 pts of margin
+_INJURY_POINTS_CAP = 7.0       # hard cap on total margin swing per team
+_INJURY_MIN_MINUTES = 18.0     # only rotation players move the needle
+
+# Shared, news-driven injury watcher reused across pre-game predictions.
+# (LeagueAnalyticsService is a frozen dataclass, so this lives at module scope.)
+_INJURY_WATCH = InjuryNewsWatch()
+
+
+@lru_cache(maxsize=1)
+def load_pregame_calibration() -> dict[str, float]:
+    """Load fitted home-court / scale constants, falling back to defaults."""
+    try:
+        data = json.loads(_CALIBRATION_PATH.read_text())
+        scale = float(data.get("scale", _DEFAULT_CALIBRATION["scale"]))
+        return {
+            "home_court_advantage": float(
+                data.get("home_court_advantage", _DEFAULT_CALIBRATION["home_court_advantage"])
+            ),
+            "scale": scale if scale > 0 else _DEFAULT_CALIBRATION["scale"],
+        }
+    except Exception:
+        return dict(_DEFAULT_CALIBRATION)
 
 
 POSITIVE_WORDS = {
@@ -399,6 +444,32 @@ class LeagueAnalyticsService:
                 break
         return games[:8] or fallback_upcoming_games()
 
+    def _out_players_for_team(
+        self, team_abbr: str, players: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
+        """Rotation players on `team_abbr` currently flagged out by injury news."""
+        alerts = _INJURY_WATCH.alerts()
+        if not alerts:
+            return []
+        headlines = " ".join(str(alert.get("headline", "")).lower() for alert in alerts)
+        out: list[dict[str, Any]] = []
+        for player in players:
+            if player.get("team") != team_abbr:
+                continue
+            if float(player.get("min", 0) or 0) < _INJURY_MIN_MINUTES:
+                continue
+            parts = str(player.get("player", "")).split()
+            last_name = parts[-1].lower() if parts else ""
+            if len(last_name) >= 4 and last_name in headlines:
+                out.append(player)
+        return out
+
+    @staticmethod
+    def _injury_points(out_players: list[dict[str, Any]]) -> float:
+        """Convert a list of out players into points-of-margin lost (capped)."""
+        total = sum(float(player.get("impact", 0) or 0) for player in out_players)
+        return round(min(_INJURY_POINTS_CAP, total * _IMPACT_TO_POINTS), 2)
+
     def game_prediction(self, away_abbr: str, home_abbr: str) -> dict[str, Any]:
         away_code = normalize_team_abbr(away_abbr)
         home_code = normalize_team_abbr(home_abbr)
@@ -411,33 +482,54 @@ class LeagueAnalyticsService:
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             }
 
+        season = current_season()
         news = self._aggregated_news()
-        teams = {team["abbr"]: team for team in self.playoff_teams(current_season(), news)}
+        teams = {team["abbr"]: team for team in self.playoff_teams(season, news)}
         away = teams.get(away_seed["abbr"], away_seed)
         home = teams.get(home_seed["abbr"], home_seed)
 
-        home_sentiment = float((home.get("sentiment") or {}).get("score", 0))
-        away_sentiment = float((away.get("sentiment") or {}).get("score", 0))
-        home_form = self._form_wins(home.get("last10", "0-0"))
-        away_form = self._form_wins(away.get("last10", "0-0"))
+        calibration = load_pregame_calibration()
+        hca = calibration["home_court_advantage"]
+        scale = calibration["scale"]
 
-        home_rating = (
-            float(home.get("net", seed_net_rating(int(home["seed"]))))
-            + float(home.get("pts", seed_points(int(home["seed"])))) * 0.08
-            + home_sentiment * 1.4
-            + (home_form - 5) * 0.18
-            + 1.6
+        home_net = float(home.get("net", seed_net_rating(int(home["seed"]))))
+        away_net = float(away.get("net", seed_net_rating(int(away["seed"]))))
+
+        # Injury adjustment (best-effort, news-driven). Reuses the shared
+        # InjuryNewsWatch and the per-player IMPACT score from playoff_players.
+        home_out: list[dict[str, Any]] = []
+        away_out: list[dict[str, Any]] = []
+        home_injury_pts = 0.0
+        away_injury_pts = 0.0
+        try:
+            players = self.playoff_players(season, news)
+            roster_names = [
+                p["player"] for p in players if p.get("team") in (home["abbr"], away["abbr"])
+            ]
+            _INJURY_WATCH.refresh(
+                team_terms=[home["team"], home["abbr"], away["team"], away["abbr"]],
+                player_terms=roster_names[:20],
+            )
+            home_out = self._out_players_for_team(home["abbr"], players)
+            away_out = self._out_players_for_team(away["abbr"], players)
+            home_injury_pts = self._injury_points(home_out)
+            away_injury_pts = self._injury_points(away_out)
+        except Exception:
+            pass
+
+        expected_home_margin = (
+            (home_net - away_net) + hca - home_injury_pts + away_injury_pts
         )
-        away_rating = (
-            float(away.get("net", seed_net_rating(int(away["seed"]))))
-            + float(away.get("pts", seed_points(int(away["seed"])))) * 0.08
-            + away_sentiment * 1.4
-            + (away_form - 5) * 0.18
-        )
-        rating_gap = home_rating - away_rating
-        home_probability = 1 / (1 + exp(-rating_gap / 6.5))
-        home_probability = max(0.18, min(0.82, home_probability))
+        home_probability = 1 / (1 + exp(-expected_home_margin / scale))
+        home_probability = max(0.02, min(0.98, home_probability))
         away_probability = 1 - home_probability
+
+        # Honest signal about whether we ran on real stats or seed fallbacks.
+        def _is_real(team: dict[str, Any]) -> bool:
+            return abs(float(team.get("net", 0)) - seed_net_rating(int(team["seed"]))) > 1e-6
+
+        data_quality = "live_stats" if (_is_real(home) or _is_real(away)) else "seed_fallback"
+
         winner = home if home_probability >= away_probability else away
         loser = away if winner["abbr"] == home["abbr"] else home
         confidence = max(home_probability, away_probability)
@@ -463,6 +555,21 @@ class LeagueAnalyticsService:
             summary_parts.append("Their recent form is a little cleaner over the last ten games.")
         if winner["abbr"] == home.get("abbr"):
             summary_parts.append("Home court adds a small boost, but it is not the whole reason for the pick.")
+
+        winner_out = home_out if winner["abbr"] == home["abbr"] else away_out
+        loser_out = away_out if winner["abbr"] == home["abbr"] else home_out
+        if loser_out:
+            loser_names = ", ".join(p.get("player", "a key player") for p in loser_out)
+            summary_parts.append(
+                f"Availability helps too: {loser['abbr']} is dealing with injury news around {loser_names}, "
+                f"which trims their projected output."
+            )
+        if winner_out:
+            winner_names = ", ".join(p.get("player", "a key player") for p in winner_out)
+            summary_parts.append(
+                f"Note that {winner['abbr']} also has injury question marks ({winner_names}), so the pick already "
+                f"accounts for a slightly thinner rotation."
+            )
 
         if sentiment_gap >= 0.2:
             summary_parts.append(
@@ -497,13 +604,37 @@ class LeagueAnalyticsService:
                 "winner": {"abbr": winner["abbr"], **winner_sentiment},
                 "loser": {"abbr": loser["abbr"], **loser_sentiment},
                 "gap": round(sentiment_gap, 2),
-                "weight": "Sentiment contributes ~15% of the rating gap (capped to keep on-court signal dominant).",
+                "weight": "Sentiment is shown for context only — it no longer moves the win probability.",
                 "sources": list({s for side in (winner_sentiment, loser_sentiment) for s in (side.get("sources") or [])})[:8],
             },
+            "expected_margin": {
+                "home": round(expected_home_margin, 1),
+                "winner": round(expected_home_margin if winner["abbr"] == home["abbr"] else -expected_home_margin, 1),
+                "home_court_advantage": round(hca, 2),
+            },
+            "injuries": {
+                "home": {
+                    "abbr": home["abbr"],
+                    "players_out": [p.get("player", "") for p in home_out],
+                    "points_lost": round(home_injury_pts, 2),
+                },
+                "away": {
+                    "abbr": away["abbr"],
+                    "players_out": [p.get("player", "") for p in away_out],
+                    "points_lost": round(away_injury_pts, 2),
+                },
+            },
+            "calibration": {
+                "home_court_advantage": round(hca, 2),
+                "scale": round(scale, 2),
+                "source": "fit to real game results" if _CALIBRATION_PATH.exists() else "default constants",
+            },
+            "data_quality": data_quality,
             "factors": [
                 {"label": "Team margin", "winner": round(winner_strength, 1), "opponent": round(loser_strength, 1)},
                 {"label": "Scoring", "winner": round(float(winner.get("pts", 0)), 1), "opponent": round(float(loser.get("pts", 0)), 1)},
                 {"label": "Recent form", "winner": winner.get("last10", "0-0"), "opponent": loser.get("last10", "0-0")},
+                {"label": "Availability", "winner": f"{len(winner_out)} key out", "opponent": f"{len(loser_out)} key out"},
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
             ],
             "generated_at": datetime.now(timezone.utc).isoformat(),
