@@ -16,6 +16,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
+- **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
 
 ## Tech Stack
 

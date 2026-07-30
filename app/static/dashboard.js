@@ -11,6 +11,7 @@ const state = {
 };
 
 const els = {
+  themeButton: document.getElementById("themeButton"),
   dataUpdated: document.getElementById("dataUpdated"),
   kpiGrid: document.getElementById("kpiGrid"),
   standingsBody: document.getElementById("standingsBody"),
@@ -879,6 +880,27 @@ document.addEventListener("click", (event) => {
     });
   }
 });
+
+const THEME_KEY = "nba-ai-theme";
+
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  els.themeButton?.setAttribute("aria-pressed", String(theme === "dark"));
+}
+
+function initTheme() {
+  const stored = localStorage.getItem(THEME_KEY);
+  const preferred = window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  applyTheme(stored || preferred);
+}
+
+els.themeButton?.addEventListener("click", () => {
+  const next = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  localStorage.setItem(THEME_KEY, next);
+  applyTheme(next);
+});
+
+initTheme();
 
 window.addEventListener("hashchange", route);
 

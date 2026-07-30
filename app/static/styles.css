@@ -25,6 +25,24 @@
   --radius: 4px;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #eef1f6;
+  --ink-2: #cfd6e0;
+  --muted: #9aa5b3;
+  --subtle: #6d7787;
+  --line: #232a35;
+  --line-strong: #323b48;
+  --page: #0b0e14;
+  --surface: #121722;
+  --surface-2: #171d29;
+  --sidebar: #05070a;
+  --sidebar-2: #05070a;
+  --accent-soft: #2a1c16;
+  --green-soft: #132821;
+  --red-soft: #2a1615;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -301,7 +319,7 @@ a {
   align-items: center;
   justify-content: flex-end;
   gap: 18px;
-  color: #f3f6fb;
+  color: var(--ink-2);
   font-size: 0.9rem;
   font-weight: 600;
 }
@@ -326,9 +344,13 @@ a {
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #dbe3ee;
+  color: var(--ink-2);
   cursor: pointer;
   position: relative;
+}
+
+.icon-button:hover {
+  background: var(--surface-2);
 }
 
 .icon-button::before {
@@ -343,6 +365,18 @@ a {
 .settings-button::before {
   inset: 10px;
   box-shadow: 0 -7px 0 -5px currentColor, 0 7px 0 -5px currentColor, 7px 0 0 -5px currentColor, -7px 0 0 -5px currentColor;
+}
+
+#themeButton::before {
+  border-radius: 50%;
+  box-shadow: none;
+  transition: box-shadow 0.15s ease;
+}
+
+:root[data-theme="dark"] #themeButton::before {
+  border: 0;
+  background: currentColor;
+  box-shadow: 6px -6px 0 -2px var(--surface);
 }
 
 .page {
