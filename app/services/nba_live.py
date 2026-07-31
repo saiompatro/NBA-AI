@@ -42,6 +42,10 @@ K_IMPACT_SHIFT = 0.05
 # Refresh player-impact table at most once every 6 hours.
 _PLAYER_TABLE_TTL = 6 * 3600
 
+# Cap stored win-probability trend points per game (snapshots arrive ~every 3s,
+# so 1000 points covers regulation + several OTs with headroom).
+_WP_HISTORY_MAX = 1000
+
 
 @dataclass
 class GameSnapshot:
@@ -66,6 +70,7 @@ class GameSnapshot:
     impact_delta: float
     home_players_out: list[dict[str, Any]]
     away_players_out: list[dict[str, Any]]
+    win_probability_history: list[float]
     events: list[str]
     source: str
     updated_at: str
@@ -123,6 +128,10 @@ class NBALiveFeed:
         # player_id (int) → {impact_per_min, avg_min, team_id, name}
         self._player_table: dict[int, dict[str, Any]] = {}
         self._player_table_loaded_at: float = 0.0
+
+        # Home win-probability trend for the currently tracked game.
+        self._wp_history_game_id: str | None = None
+        self._wp_history: list[float] = []
 
     # ------------------------------------------------------------------
     # Public API
@@ -270,6 +279,13 @@ class NBALiveFeed:
             4,
         )
 
+        if self._wp_history_game_id != game_id:
+            self._wp_history_game_id = game_id
+            self._wp_history = []
+        self._wp_history.append(adjusted_probability)
+        if len(self._wp_history) > _WP_HISTORY_MAX:
+            self._wp_history = self._wp_history[-_WP_HISTORY_MAX:]
+
         events = self._build_events(
             shot_quality_model=shot_quality_model,
             possession=possession,
@@ -306,6 +322,7 @@ class NBALiveFeed:
             impact_delta=round(impact_delta_per_min, 3),
             home_players_out=home_players_out,
             away_players_out=away_players_out,
+            win_probability_history=list(self._wp_history),
             events=events,
             source=source,
             updated_at=datetime.now(timezone.utc).isoformat(),

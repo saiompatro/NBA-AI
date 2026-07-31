@@ -356,6 +356,7 @@ function renderLivePage() {
         <div class="probability-row"><span>${html(snapshot.away_team)}</span><div><i style="width:${awayWin}%"></i></div><strong>${awayWin}%</strong></div>
         <div class="probability-row"><span>${html(snapshot.home_team)}</span><div><i style="width:${homeWin}%"></i></div><strong>${homeWin}%</strong></div>
         ${isAdjusted ? `<p class="prob-adjustment-note">Raw model: ${100 - rawHomeWin}% / ${rawHomeWin}% &rarr; adjusted for unavailable players</p>` : ""}
+        ${winProbabilityChart(snapshot.win_probability_history, snapshot.home_team, snapshot.away_team)}
         <div class="shot-quality-meter">
           <span>Shot Quality</span>
           <strong>${shotQuality}%</strong>
@@ -819,6 +820,33 @@ function renderSettingsPage() {
       <div class="simple-row"><span><strong>Live Data</strong><br /><small>Socket.IO updates every few seconds.</small></span><span class="sentiment-pill positive">Enabled</span></div>
       <div class="simple-row"><span><strong>Playoff Scope</strong><br /><small>Restrict teams and players to playoff qualifiers.</small></span><span class="sentiment-pill positive">Only playoff teams</span></div>
       <div class="simple-row"><span><strong>Rotation Method</strong><br /><small>Top minutes define starting 5, remaining playoff players are bench.</small></span><span class="sentiment-pill neutral">Minutes based</span></div>
+    </div>
+  `;
+}
+
+function winProbabilityChart(history, homeTeam, awayTeam) {
+  const points = (history || []).map(Number).filter((v) => !Number.isNaN(v));
+  if (points.length < 2) return "";
+  const w = 600;
+  const h = 140;
+  const pad = 6;
+  const coords = points.map((value, index) => {
+    const x = pad + index * ((w - pad * 2) / Math.max(points.length - 1, 1));
+    const y = pad + (1 - value) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const midY = (pad + (1 - 0.5) * (h - pad * 2)).toFixed(1);
+  return `
+    <div class="wp-chart">
+      <div class="wp-chart-heading">
+        <span>${html(awayTeam)}</span>
+        <span>Win probability trend</span>
+        <span>${html(homeTeam)}</span>
+      </div>
+      <svg class="wp-chart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" role="img" aria-label="Win probability over time">
+        <line x1="0" y1="${midY}" x2="${w}" y2="${midY}" class="wp-chart-midline" />
+        <polyline fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${coords}" class="wp-chart-line" />
+      </svg>
     </div>
   `;
 }

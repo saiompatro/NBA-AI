@@ -12,6 +12,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Play-by-play tracker** — score, possession, latest event, shot context, shot quality, and win probability
 - **Shot-quality model** — XGBoost regressor using distance, angle, defender distance, shot clock, and game situation
 - **Win-probability model** — PyTorch network using score differential, time remaining, possession, fouls, and shot quality
+- **Win-probability trend chart** — live line chart of the home team's win probability across the game, capped at the last 1,000 snapshots
 - **Playoff dashboard** — standings, schedule, team form, player leaders, sentiment, and alerts
 - **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
