@@ -45,6 +45,14 @@ _INJURY_MIN_MINUTES = 18.0     # only rotation players move the needle
 # (LeagueAnalyticsService is a frozen dataclass, so this lives at module scope.)
 _INJURY_WATCH = InjuryNewsWatch()
 
+# Rest / schedule-fatigue adjustment. Public win-probability models (FiveThirtyEight's
+# NBA Elo, Inpredictable) price in rest advantage and back-to-backs; ours didn't, even
+# though the ESPN scoreboard we already poll for `upcoming_games` is enough to derive it.
+_REST_LOOKBACK_DAYS = 6     # how many days back to search for a team's last game
+_REST_DAYS_CAP = 3          # rest beyond this stops helping (diminishing returns)
+_REST_POINTS_PER_DAY = 0.5  # each extra day of rest edge is worth ~0.5 pts of margin
+_BACK_TO_BACK_PENALTY = 1.5  # extra fatigue penalty for 0 days rest (2nd night of a b2b)
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -470,6 +478,29 @@ class LeagueAnalyticsService:
         total = sum(float(player.get("impact", 0) or 0) for player in out_players)
         return round(min(_INJURY_POINTS_CAP, total * _IMPACT_TO_POINTS), 2)
 
+    def _last_game_date(self, team_abbr: str, before: date) -> date | None:
+        """Most recent date `team_abbr` played, searching backward from (not
+        including) `before` on the public ESPN scoreboard."""
+        for offset in range(1, _REST_LOOKBACK_DAYS + 1):
+            day = before - timedelta(days=offset)
+            for event in self._espn_scoreboard(day):
+                competitions = event.get("competitions") or []
+                if not competitions:
+                    continue
+                for competitor in competitions[0].get("competitors", []):
+                    abbr = normalize_team_abbr(competitor.get("team", {}).get("abbreviation", ""))
+                    if abbr == team_abbr:
+                        return day
+        return None
+
+    def _rest_days(self, team_abbr: str, game_date: date) -> int:
+        """Days of rest before `game_date` (0 = back-to-back). Unknown -> fully rested,
+        since a missing schedule shouldn't manufacture a fatigue penalty."""
+        last_game = self._last_game_date(team_abbr, game_date)
+        if last_game is None:
+            return _REST_DAYS_CAP
+        return max(0, min(_REST_DAYS_CAP, (game_date - last_game).days - 1))
+
     def game_prediction(self, away_abbr: str, home_abbr: str) -> dict[str, Any]:
         away_code = normalize_team_abbr(away_abbr)
         home_code = normalize_team_abbr(home_abbr)
@@ -517,8 +548,17 @@ class LeagueAnalyticsService:
         except Exception:
             pass
 
+        game_date = date.today()
+        home_rest = self._rest_days(home["abbr"], game_date)
+        away_rest = self._rest_days(away["abbr"], game_date)
+        rest_edge = (home_rest - away_rest) * _REST_POINTS_PER_DAY
+        if home_rest == 0:
+            rest_edge -= _BACK_TO_BACK_PENALTY
+        if away_rest == 0:
+            rest_edge += _BACK_TO_BACK_PENALTY
+
         expected_home_margin = (
-            (home_net - away_net) + hca - home_injury_pts + away_injury_pts
+            (home_net - away_net) + hca - home_injury_pts + away_injury_pts + rest_edge
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -555,6 +595,15 @@ class LeagueAnalyticsService:
             summary_parts.append("Their recent form is a little cleaner over the last ten games.")
         if winner["abbr"] == home.get("abbr"):
             summary_parts.append("Home court adds a small boost, but it is not the whole reason for the pick.")
+
+        winner_rest = home_rest if winner["abbr"] == home["abbr"] else away_rest
+        loser_rest = away_rest if winner["abbr"] == home["abbr"] else home_rest
+        if loser_rest == 0 and winner_rest > 0:
+            summary_parts.append(f"{loser['abbr']} is on the second night of a back-to-back, which usually costs a point or two of margin.")
+        elif winner_rest == 0 and loser_rest > 0:
+            summary_parts.append(f"{winner['abbr']} is on a back-to-back too, so the pick already prices in some fatigue.")
+        elif winner_rest > loser_rest:
+            summary_parts.append(f"{winner['abbr']} also comes in with the extra rest, which helps late in games.")
 
         winner_out = home_out if winner["abbr"] == home["abbr"] else away_out
         loser_out = away_out if winner["abbr"] == home["abbr"] else home_out
@@ -624,6 +673,11 @@ class LeagueAnalyticsService:
                     "points_lost": round(away_injury_pts, 2),
                 },
             },
+            "rest": {
+                "home": {"abbr": home["abbr"], "days": home_rest, "back_to_back": home_rest == 0},
+                "away": {"abbr": away["abbr"], "days": away_rest, "back_to_back": away_rest == 0},
+                "margin_edge": round(rest_edge, 2),
+            },
             "calibration": {
                 "home_court_advantage": round(hca, 2),
                 "scale": round(scale, 2),
@@ -635,6 +689,7 @@ class LeagueAnalyticsService:
                 {"label": "Scoring", "winner": round(float(winner.get("pts", 0)), 1), "opponent": round(float(loser.get("pts", 0)), 1)},
                 {"label": "Recent form", "winner": winner.get("last10", "0-0"), "opponent": loser.get("last10", "0-0")},
                 {"label": "Availability", "winner": f"{len(winner_out)} key out", "opponent": f"{len(loser_out)} key out"},
+                {"label": "Rest", "winner": f"{winner_rest}d rest", "opponent": f"{loser_rest}d rest"},
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
             ],
             "generated_at": datetime.now(timezone.utc).isoformat(),
