@@ -53,6 +53,15 @@ _REST_DAYS_CAP = 3          # rest beyond this stops helping (diminishing return
 _REST_POINTS_PER_DAY = 0.5  # each extra day of rest edge is worth ~0.5 pts of margin
 _BACK_TO_BACK_PENALTY = 1.5  # extra fatigue penalty for 0 days rest (2nd night of a b2b)
 
+# Recent-form (momentum) adjustment. `last10` was already computed and shown to users
+# as a "why we picked this team" factor, but it never actually moved the probability -
+# only season-long net rating did. Public models (538, Vegas-implied) weight recent
+# form on top of season strength since hot/cold streaks and lineup changes drift away
+# from the full-season number. Keep the swing small and capped: this is a nudge on top
+# of net rating, not a replacement for it.
+_FORM_POINTS_PER_WIN = 0.3  # each extra win (out of 10) above/below the opponent's
+_FORM_POINTS_CAP = 2.0      # hard cap on total margin swing from recent form
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -557,8 +566,10 @@ class LeagueAnalyticsService:
         if away_rest == 0:
             rest_edge += _BACK_TO_BACK_PENALTY
 
+        form_edge = form_margin_edge(home.get("last10", "5-5"), away.get("last10", "5-5"))
+
         expected_home_margin = (
-            (home_net - away_net) + hca - home_injury_pts + away_injury_pts + rest_edge
+            (home_net - away_net) + hca - home_injury_pts + away_injury_pts + rest_edge + form_edge
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -592,7 +603,7 @@ class LeagueAnalyticsService:
         elif scoring_gap <= -1:
             summary_parts.append("The other team scores a bit more, so this pick leans more on margin, form, and matchup balance than raw points.")
         if form_gap > 0:
-            summary_parts.append("Their recent form is a little cleaner over the last ten games.")
+            summary_parts.append("Their recent form is a little cleaner over the last ten games, which nudges the number toward them.")
         if winner["abbr"] == home.get("abbr"):
             summary_parts.append("Home court adds a small boost, but it is not the whole reason for the pick.")
 
@@ -677,6 +688,11 @@ class LeagueAnalyticsService:
                 "home": {"abbr": home["abbr"], "days": home_rest, "back_to_back": home_rest == 0},
                 "away": {"abbr": away["abbr"], "days": away_rest, "back_to_back": away_rest == 0},
                 "margin_edge": round(rest_edge, 2),
+            },
+            "form": {
+                "home": {"abbr": home["abbr"], "last10": home.get("last10", "5-5")},
+                "away": {"abbr": away["abbr"], "last10": away.get("last10", "5-5")},
+                "margin_edge": round(form_edge, 2),
             },
             "calibration": {
                 "home_court_advantage": round(hca, 2),
@@ -1081,6 +1097,14 @@ def seed_points(seed: int) -> float:
 
 def seed_net_rating(seed: int) -> float:
     return round(10.0 - seed * 2.1, 1)
+
+
+def form_margin_edge(home_last10: str, away_last10: str) -> float:
+    """Points of home margin from recent-form momentum (capped, symmetric)."""
+    home_wins = LeagueAnalyticsService._form_wins(home_last10)
+    away_wins = LeagueAnalyticsService._form_wins(away_last10)
+    edge = (home_wins - away_wins) * _FORM_POINTS_PER_WIN
+    return max(-_FORM_POINTS_CAP, min(_FORM_POINTS_CAP, edge))
 
 
 def simulated_last10(wins: int, losses: int) -> str:
