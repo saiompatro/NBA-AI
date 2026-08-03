@@ -21,6 +21,10 @@ _NBA_HEADERS = {
 
 _SCOREBOARD_URL = "https://cdn.nba.com/static/json/liveData/scoreboard/todaysScoreboard_00.json"
 _PLAYBYPLAY_URL = "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_{game_id}.json"
+_BOXSCORE_URL = "https://cdn.nba.com/static/json/liveData/boxscore/boxscore_{game_id}.json"
+
+# Top scorers shown per team in the live box score panel.
+_BOX_SCORE_TOP_N = 5
 
 
 def _nba_get(url: str, timeout: int = 10) -> dict:
@@ -70,6 +74,8 @@ class GameSnapshot:
     impact_delta: float
     home_players_out: list[dict[str, Any]]
     away_players_out: list[dict[str, Any]]
+    home_box_score: list[dict[str, Any]]
+    away_box_score: list[dict[str, Any]]
     win_probability_history: list[float]
     events: list[str]
     source: str
@@ -102,6 +108,47 @@ def _time_remaining(period: int, clock: str) -> int:
     if period <= 4:
         return max(regulation_total - elapsed_before_period - (12 * 60 - remaining_in_period), 0)
     return max(remaining_in_period, 0)
+
+
+def _box_score_minutes(iso: str) -> str:
+    if not iso:
+        return "0:00"
+    clean = iso.replace("PT", "").replace("M", ":").replace("S", "")
+    try:
+        minutes, seconds = clean.split(":")
+        return f"{int(minutes)}:{int(float(seconds)):02d}"
+    except ValueError:
+        return "0:00"
+
+
+def _parse_boxscore(data: dict, top_n: int = _BOX_SCORE_TOP_N) -> dict[str, list[dict[str, Any]]]:
+    """Reduce a raw NBA CDN boxscore payload to each team's top scorers."""
+    game = data.get("game", {}) if isinstance(data, dict) else {}
+    result: dict[str, list[dict[str, Any]]] = {"home": [], "away": []}
+    for side, key in (("homeTeam", "home"), ("awayTeam", "away")):
+        rows = []
+        for p in (game.get(side) or {}).get("players", []):
+            stats = p.get("statistics") or {}
+            minutes = stats.get("minutes") or ""
+            if not minutes:
+                continue  # hasn't checked into the game
+            name = p.get("name") or f"{p.get('firstName', '')} {p.get('familyName', '')}".strip()
+            rows.append(
+                {
+                    "name": name or "Unknown",
+                    "position": p.get("position") or "-",
+                    "minutes": _box_score_minutes(minutes),
+                    "points": int(stats.get("points", 0) or 0),
+                    "rebounds": int(stats.get("reboundsTotal", 0) or 0),
+                    "assists": int(stats.get("assists", 0) or 0),
+                    "steals": int(stats.get("steals", 0) or 0),
+                    "blocks": int(stats.get("blocks", 0) or 0),
+                    "plus_minus": int(stats.get("plusMinusPoints", 0) or 0),
+                }
+            )
+        rows.sort(key=lambda r: r["points"], reverse=True)
+        result[key] = rows[:top_n]
+    return result
 
 
 def _logit(p: float) -> float:
@@ -194,6 +241,13 @@ class NBALiveFeed:
                 logger.warning("Play-by-play fetch failed for %s: %s", game_id, exc)
                 actions = []
 
+            try:
+                box_data = _nba_get(_BOXSCORE_URL.format(game_id=game_id))
+                box_score = _parse_boxscore(box_data)
+            except Exception as exc:
+                logger.warning("Box score fetch failed for %s: %s", game_id, exc)
+                box_score = {"home": [], "away": []}
+
             possession = self._possession(actions, home, away)
             score_diff = home_score - away_score
             remaining = _time_remaining(period, clock)
@@ -218,6 +272,8 @@ class NBALiveFeed:
                 away_fouls=int(away.get("fouls", 0) or 0),
                 shot_quality_model=shot_quality.as_dict(),
                 actions=actions,
+                home_box_score=box_score["home"],
+                away_box_score=box_score["away"],
                 source="NBA CDN live scoreboard + play-by-play",
             )
         except Exception as exc:
@@ -241,6 +297,8 @@ class NBALiveFeed:
         shot_quality_model: dict[str, Any],
         actions: list[dict[str, Any]],
         source: str,
+        home_box_score: list[dict[str, Any]] | None = None,
+        away_box_score: list[dict[str, Any]] | None = None,
     ) -> GameSnapshot:
         score_diff = home_score - away_score
         shot_quality = float(shot_quality_model["shot_quality"])
@@ -322,6 +380,8 @@ class NBALiveFeed:
             impact_delta=round(impact_delta_per_min, 3),
             home_players_out=home_players_out,
             away_players_out=away_players_out,
+            home_box_score=home_box_score or [],
+            away_box_score=away_box_score or [],
             win_probability_history=list(self._wp_history),
             events=events,
             source=source,

@@ -976,6 +976,48 @@ td {
   white-space: nowrap;
 }
 
+.box-score-panel {
+  grid-column: 1 / -1;
+}
+
+.box-score-team + .box-score-team {
+  margin-top: 18px;
+}
+
+.box-score-team h3 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--ink);
+}
+
+.box-score-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.82rem;
+}
+
+.box-score-table th,
+.box-score-table td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.box-score-table th:first-child,
+.box-score-table td:first-child {
+  text-align: left;
+}
+
+.box-score-table th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
 .leaders-list {
   display: grid;
 }

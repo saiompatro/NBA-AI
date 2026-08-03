@@ -288,6 +288,8 @@ function renderLivePage() {
   const shotQuality = Math.round(Number(snapshot?.shot_quality || model.shot_quality || 0) * 100);
   const homeOut = snapshot?.home_players_out || [];
   const awayOut = snapshot?.away_players_out || [];
+  const homeBox = snapshot?.home_box_score || [];
+  const awayBox = snapshot?.away_box_score || [];
   const hasUnavailable = homeOut.length > 0 || awayOut.length > 0;
   const isAdjusted = hasUnavailable && Math.abs(homeWin - rawHomeWin) >= 1;
 
@@ -376,6 +378,11 @@ function renderLivePage() {
           `).join("")}
         </div>
       </article>` : ""}
+      <article class="panel box-score-panel">
+        <div class="panel-heading"><h2>Box Score</h2><span>Top scorers</span></div>
+        ${boxScoreTable(snapshot.away_team, awayBox)}
+        ${boxScoreTable(snapshot.home_team, homeBox)}
+      </article>
       <article class="panel">
         <div class="panel-heading"><h2>Play-by-Play Events</h2><span>${html(model.source || snapshot.source)}</span></div>
         <div class="event-list">
@@ -820,6 +827,35 @@ function renderSettingsPage() {
       <div class="simple-row"><span><strong>Live Data</strong><br /><small>Socket.IO updates every few seconds.</small></span><span class="sentiment-pill positive">Enabled</span></div>
       <div class="simple-row"><span><strong>Playoff Scope</strong><br /><small>Restrict teams and players to playoff qualifiers.</small></span><span class="sentiment-pill positive">Only playoff teams</span></div>
       <div class="simple-row"><span><strong>Rotation Method</strong><br /><small>Top minutes define starting 5, remaining playoff players are bench.</small></span><span class="sentiment-pill neutral">Minutes based</span></div>
+    </div>
+  `;
+}
+
+function boxScoreTable(teamName, rows) {
+  if (!rows || rows.length === 0) return "";
+  return `
+    <div class="box-score-team">
+      <h3>${html(teamName)}</h3>
+      <table class="box-score-table">
+        <thead>
+          <tr><th>Player</th><th>Pos</th><th>Min</th><th>Pts</th><th>Reb</th><th>Ast</th><th>Stl</th><th>Blk</th><th>+/-</th></tr>
+        </thead>
+        <tbody>
+          ${rows.map((p) => `
+            <tr>
+              <td>${html(p.name)}</td>
+              <td>${html(p.position)}</td>
+              <td>${html(p.minutes)}</td>
+              <td>${p.points}</td>
+              <td>${p.rebounds}</td>
+              <td>${p.assists}</td>
+              <td>${p.steals}</td>
+              <td>${p.blocks}</td>
+              <td>${Number(p.plus_minus) > 0 ? "+" : ""}${p.plus_minus}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
     </div>
   `;
 }

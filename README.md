@@ -10,6 +10,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 
 - **Live scoreboard** — detects active NBA games via `nba_api` and polls every 3 seconds
 - **Play-by-play tracker** — score, possession, latest event, shot context, shot quality, and win probability
+- **Live box score** — top scorers per team (points, rebounds, assists, steals, blocks, +/-) pulled from the NBA CDN boxscore feed
 - **Shot-quality model** — XGBoost regressor using distance, angle, defender distance, shot clock, and game situation
 - **Win-probability model** — PyTorch network using score differential, time remaining, possession, fouls, and shot quality
 - **Win-probability trend chart** — live line chart of the home team's win probability across the game, capped at the last 1,000 snapshots
