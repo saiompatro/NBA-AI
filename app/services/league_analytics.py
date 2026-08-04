@@ -180,6 +180,8 @@ class LeagueAnalyticsService:
                     frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
             stats_by_id = {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
+        advanced_by_id = self._advanced_team_stats(season)
+
         rows = []
         for team in PLAYOFF_SEEDS_2026:
             stats = stats_by_id.get(int(team["team_id"]), {})
@@ -189,6 +191,8 @@ class LeagueAnalyticsService:
             playoff_losses = int(stats.get("L", 0))
             plus_minus = round(float(stats.get("PLUS_MINUS", seed_net_rating(team["seed"]))), 1)
             sentiment = self._sentiment_for_terms(news, [team["team"], team["abbr"]], plus_minus)
+            adv = advanced_by_id.get(int(team["team_id"]))
+            fallback_adv = advanced_fallback(plus_minus)
             rows.append(
                 {
                     **team,
@@ -206,12 +210,35 @@ class LeagueAnalyticsService:
                     "stl": round(float(stats.get("STL", 7.2)), 1),
                     "blk": round(float(stats.get("BLK", 4.5)), 1),
                     "tov": round(float(stats.get("TOV", 13.0)), 1),
+                    "off_rtg": round(float(adv["OFF_RATING"]), 1) if adv else fallback_adv["off_rtg"],
+                    "def_rtg": round(float(adv["DEF_RATING"]), 1) if adv else fallback_adv["def_rtg"],
+                    "pace": round(float(adv["PACE"]), 1) if adv else fallback_adv["pace"],
+                    "efg_pct": round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"],
+                    "ts_pct": round(float(adv["TS_PCT"]) * 100, 1) if adv else fallback_adv["ts_pct"],
+                    "tov_pct": round(float(adv["TM_TOV_PCT"]) * 100, 1) if adv else fallback_adv["tov_pct"],
                     "last10": simulated_last10(playoff_wins, playoff_losses),
                     "streak": streak_from_net(plus_minus),
                     "sentiment": sentiment,
                 }
             )
         return rows
+
+    def _advanced_team_stats(self, season: str) -> dict[int, dict[str, Any]]:
+        """Off/def rating, pace, and four-factors efficiency (NBA Stats MeasureType=Advanced).
+
+        Same data source we already poll for box stats - competing dashboards (NBA.com
+        Stats, Cleaning the Glass) lead with these per-possession numbers instead of raw
+        per-game counting stats, which is what we had until now.
+        """
+        params = common_dash_params(season, "Playoffs", "PerGame")
+        params["MeasureType"] = "Advanced"
+        frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
+        if frame.empty:
+            return {}
+        for column in ["TEAM_ID", "OFF_RATING", "DEF_RATING", "PACE", "EFG_PCT", "TS_PCT", "TM_TOV_PCT"]:
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+        return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
     def playoff_players(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
@@ -1097,6 +1124,21 @@ def seed_points(seed: int) -> float:
 
 def seed_net_rating(seed: int) -> float:
     return round(10.0 - seed * 2.1, 1)
+
+
+def advanced_fallback(net_rating: float) -> dict[str, float]:
+    """Deterministic off/def rating, pace, and four-factors stand-ins when the
+    NBA Stats Advanced endpoint is unreachable, derived from the net rating we
+    already have so a team's fallback ratings stay internally consistent."""
+    off_rtg = 113.0 + net_rating / 2
+    return {
+        "off_rtg": round(off_rtg, 1),
+        "def_rtg": round(off_rtg - net_rating, 1),
+        "pace": 99.5,
+        "efg_pct": 53.0,
+        "ts_pct": 56.5,
+        "tov_pct": 13.0,
+    }
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:

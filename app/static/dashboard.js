@@ -675,6 +675,12 @@ function renderTeamDetail(slug) {
           <div><span>NET</span><strong>${team.net > 0 ? "+" : ""}${team.net}</strong></div>
           <div><span>FG%</span><strong>${team.fg_pct}</strong></div>
           <div><span>STREAK</span><strong>${team.streak}</strong></div>
+          <div><span>OFF RTG</span><strong>${team.off_rtg}</strong></div>
+          <div><span>DEF RTG</span><strong>${team.def_rtg}</strong></div>
+          <div><span>PACE</span><strong>${team.pace}</strong></div>
+          <div><span>EFG%</span><strong>${team.efg_pct}</strong></div>
+          <div><span>TS%</span><strong>${team.ts_pct}</strong></div>
+          <div><span>TOV%</span><strong>${team.tov_pct}</strong></div>
         </div>
         <div class="mini-panel" style="margin-top:14px">
           <h4>Offensive Trend</h4>
