@@ -24,6 +24,8 @@ const els = {
   sentimentBody: document.getElementById("sentimentBody"),
   livePage: document.getElementById("livePage"),
   fullStandings: document.getElementById("fullStandings"),
+  globalSearch: document.getElementById("globalSearch"),
+  searchResults: document.getElementById("searchResults"),
   playerTeamFilter: document.getElementById("playerTeamFilter"),
   playersGrid: document.getElementById("playersGrid"),
   teamsGrid: document.getElementById("teamsGrid"),
@@ -948,6 +950,66 @@ document.addEventListener("click", (event) => {
       terms,
       refresh: true,
     });
+  }
+});
+
+function searchMatches(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const players = (state.analytics?.players || [])
+    .filter((player) => player.player.toLowerCase().includes(q))
+    .slice(0, 6)
+    .map((player) => ({ type: "Player", href: playerRoute(player), label: player.player, sub: player.team_name, image: player.headshot }));
+  const teams = (state.analytics?.teams || [])
+    .filter((team) => team.team.toLowerCase().includes(q) || team.abbr.toLowerCase().includes(q))
+    .slice(0, 5)
+    .map((team) => ({ type: "Team", href: `#/teams/${team.slug}`, label: team.team, sub: team.conference, image: team.logo }));
+  return [...players, ...teams].slice(0, 8);
+}
+
+function closeSearchResults() {
+  if (!els.searchResults) return;
+  els.searchResults.hidden = true;
+  els.searchResults.innerHTML = "";
+}
+
+function renderSearchResults() {
+  if (!els.searchResults || !els.globalSearch) return;
+  const query = els.globalSearch.value;
+  if (!query.trim()) {
+    closeSearchResults();
+    return;
+  }
+  const results = searchMatches(query);
+  els.searchResults.innerHTML = results.length
+    ? results.map((item) => `
+        <a href="${html(item.href)}" data-search-result>
+          <img src="${html(item.image || "")}" alt="" />
+          <span><strong>${html(item.label)}</strong><small>${html(item.sub || "")}</small></span>
+          <small class="search-type">${item.type}</small>
+        </a>
+      `).join("")
+    : `<div class="search-empty">No matches for "${html(query)}"</div>`;
+  els.searchResults.hidden = false;
+}
+
+els.globalSearch?.addEventListener("input", renderSearchResults);
+els.globalSearch?.addEventListener("focus", renderSearchResults);
+els.globalSearch?.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    els.globalSearch.blur();
+    closeSearchResults();
+  }
+});
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-search-result]")) {
+    els.globalSearch.value = "";
+    closeSearchResults();
+    return;
+  }
+  if (!event.target.closest(".global-search")) {
+    closeSearchResults();
   }
 });
 

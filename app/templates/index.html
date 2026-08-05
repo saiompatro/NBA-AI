@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=20" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=21" />
   </head>
   <body>
     <div class="app-shell">
@@ -60,6 +60,10 @@
           <div class="mobile-brand">
             <span class="brand-ball" aria-hidden="true">NBA</span>
             <strong>NBA <span>Live</span> Predictor</strong>
+          </div>
+          <div class="global-search">
+            <input type="search" id="globalSearch" placeholder="Search players or teams" aria-label="Search players or teams" autocomplete="off" />
+            <div class="search-results" id="searchResults" hidden></div>
           </div>
           <div class="topbar-status">
             <span>Data updated: <strong id="dataUpdated">--</strong></span>
@@ -195,6 +199,6 @@
     </div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script src="{{ url_for('static', filename='dashboard.js') }}?v=20"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}?v=21"></script>
   </body>
 </html>

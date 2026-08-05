@@ -20,6 +20,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
+- **Global search** — topbar search box for jumping straight to any player or team profile by name
 
 ## Tech Stack
 
