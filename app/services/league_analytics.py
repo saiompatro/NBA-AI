@@ -62,6 +62,14 @@ _BACK_TO_BACK_PENALTY = 1.5  # extra fatigue penalty for 0 days rest (2nd night 
 _FORM_POINTS_PER_WIN = 0.3  # each extra win (out of 10) above/below the opponent's
 _FORM_POINTS_CAP = 2.0      # hard cap on total margin swing from recent form
 
+# Home/road split adjustment. We priced the blended season net rating identically for
+# both sides, but teams play differently at home vs. on the road (Inpredictable and
+# NBA.com Stats both lead with location-split ratings for this reason). Blend a slice
+# of the home-only/road-only net rating on top of the season number instead of
+# replacing it, since splits are noisier (smaller sample) than the full-season figure.
+_HOME_ROAD_SPLIT_WEIGHT = 0.35  # how much of the location-split delta feeds the margin
+_HOME_ROAD_SPLIT_CAP = 4.0      # hard cap on total margin swing from the split
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -239,6 +247,24 @@ class LeagueAnalyticsService:
             if column in frame:
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
+
+    @lru_cache(maxsize=4)
+    def _home_road_net_ratings(self, season: str) -> dict[str, dict[int, float]]:
+        """Home-only and road-only net (PLUS_MINUS) rating per team, via the NBA Stats
+        `Location` filter on the same leaguedashteamstats endpoint we already poll."""
+        splits: dict[str, dict[int, float]] = {"home": {}, "road": {}}
+        for key, location in (("home", "Home"), ("road", "Road")):
+            params = common_dash_params(season, "Playoffs", "PerGame")
+            params["Location"] = location
+            frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
+            if frame.empty or "PLUS_MINUS" not in frame:
+                continue
+            frame["PLUS_MINUS"] = pd.to_numeric(frame["PLUS_MINUS"], errors="coerce").fillna(0)
+            for row in frame.to_dict("records"):
+                team_id = int(row.get("TEAM_ID", 0))
+                if team_id in TEAM_BY_ID:
+                    splits[key][team_id] = float(row["PLUS_MINUS"])
+        return splits
 
     def playoff_players(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
@@ -595,8 +621,16 @@ class LeagueAnalyticsService:
 
         form_edge = form_margin_edge(home.get("last10", "5-5"), away.get("last10", "5-5"))
 
+        try:
+            splits = self._home_road_net_ratings(season)
+        except Exception:
+            splits = {"home": {}, "road": {}}
+        home_split_net = splits.get("home", {}).get(int(home["team_id"]))
+        away_split_net = splits.get("road", {}).get(int(away["team_id"]))
+        split_edge = home_road_split_edge(home_split_net, away_split_net, home_net, away_net)
+
         expected_home_margin = (
-            (home_net - away_net) + hca - home_injury_pts + away_injury_pts + rest_edge + form_edge
+            (home_net - away_net) + hca - home_injury_pts + away_injury_pts + rest_edge + form_edge + split_edge
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -656,6 +690,15 @@ class LeagueAnalyticsService:
             summary_parts.append(
                 f"Note that {winner['abbr']} also has injury question marks ({winner_names}), so the pick already "
                 f"accounts for a slightly thinner rotation."
+            )
+
+        winner_split_net = home_split_net if winner["abbr"] == home["abbr"] else away_split_net
+        loser_split_net = away_split_net if winner["abbr"] == home["abbr"] else home_split_net
+        winner_split_edge = split_edge if winner["abbr"] == home["abbr"] else -split_edge
+        if winner_split_net is not None and loser_split_net is not None and abs(winner_split_edge) >= 0.3:
+            where = "at home" if winner["abbr"] == home["abbr"] else "on the road"
+            summary_parts.append(
+                f"{winner['abbr']} also plays better {where} than their season number alone suggests, adding a bit more edge."
             )
 
         if sentiment_gap >= 0.2:
@@ -721,6 +764,11 @@ class LeagueAnalyticsService:
                 "away": {"abbr": away["abbr"], "last10": away.get("last10", "5-5")},
                 "margin_edge": round(form_edge, 2),
             },
+            "home_road_split": {
+                "home": {"abbr": home["abbr"], "home_net": round(home_split_net, 1) if home_split_net is not None else None},
+                "away": {"abbr": away["abbr"], "road_net": round(away_split_net, 1) if away_split_net is not None else None},
+                "margin_edge": round(split_edge, 2),
+            },
             "calibration": {
                 "home_court_advantage": round(hca, 2),
                 "scale": round(scale, 2),
@@ -733,6 +781,11 @@ class LeagueAnalyticsService:
                 {"label": "Recent form", "winner": winner.get("last10", "0-0"), "opponent": loser.get("last10", "0-0")},
                 {"label": "Availability", "winner": f"{len(winner_out)} key out", "opponent": f"{len(loser_out)} key out"},
                 {"label": "Rest", "winner": f"{winner_rest}d rest", "opponent": f"{loser_rest}d rest"},
+                {
+                    "label": "Home/road split",
+                    "winner": f"{winner_split_net:+.1f} net" if winner_split_net is not None else "N/A",
+                    "opponent": f"{loser_split_net:+.1f} net" if loser_split_net is not None else "N/A",
+                },
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
             ],
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -1147,6 +1200,23 @@ def form_margin_edge(home_last10: str, away_last10: str) -> float:
     away_wins = LeagueAnalyticsService._form_wins(away_last10)
     edge = (home_wins - away_wins) * _FORM_POINTS_PER_WIN
     return max(-_FORM_POINTS_CAP, min(_FORM_POINTS_CAP, edge))
+
+
+def home_road_split_edge(
+    home_split_net: float | None,
+    away_split_net: float | None,
+    home_season_net: float,
+    away_season_net: float,
+) -> float:
+    """Points of home margin added on top of blended season net rating once each team's
+    home-only / road-only net rating is known. Missing splits (rare - only happens if the
+    Location-filtered NBA Stats query fails) contribute nothing, matching the fallback
+    behavior of the other pre-game adjustments."""
+    if home_split_net is None or away_split_net is None:
+        return 0.0
+    blended_delta = (home_split_net - away_split_net) - (home_season_net - away_season_net)
+    edge = blended_delta * _HOME_ROAD_SPLIT_WEIGHT
+    return max(-_HOME_ROAD_SPLIT_CAP, min(_HOME_ROAD_SPLIT_CAP, edge))
 
 
 def simulated_last10(wins: int, losses: int) -> str:

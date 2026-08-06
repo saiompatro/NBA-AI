@@ -16,7 +16,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Win-probability trend chart** — live line chart of the home team's win probability across the game, capped at the last 1,000 snapshots
 - **Playoff dashboard** — standings, schedule, team form, player leaders, sentiment, and alerts
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
-- **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, injuries, news sentiment, and rest/back-to-back schedule fatigue
+- **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, and home/road performance splits
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
