@@ -8,6 +8,7 @@ const state = {
   playerFilter: "ALL",
   predictions: {},
   news: {},
+  compare: { a: null, b: null },
 };
 
 const els = {
@@ -33,6 +34,7 @@ const els = {
   playerDetailPage: document.getElementById("playerDetailPage"),
   alertsPage: document.getElementById("alertsPage"),
   predictionsPage: document.getElementById("predictionsPage"),
+  comparePage: document.getElementById("comparePage"),
   settingsPage: document.getElementById("settingsPage"),
 };
 
@@ -149,6 +151,11 @@ function route() {
   if (section === "predictions") {
     renderPredictionsPage();
     setActivePage("predictionsPage", "predictions");
+    return;
+  }
+  if (section === "compare") {
+    renderComparePage();
+    setActivePage("comparePage", "compare");
     return;
   }
   if (section === "settings") {
@@ -839,6 +846,68 @@ function renderSettingsPage() {
   `;
 }
 
+const COMPARE_STATS = [
+  { key: "pts", label: "PPG" },
+  { key: "reb", label: "RPG" },
+  { key: "ast", label: "APG" },
+  { key: "stl", label: "SPG" },
+  { key: "blk", label: "BPG" },
+  { key: "min", label: "MIN" },
+  { key: "fg_pct", label: "FG%" },
+  { key: "fg3_pct", label: "3P%" },
+  { key: "plus_minus", label: "+/-" },
+  { key: "impact", label: "Impact" },
+];
+
+function renderComparePage() {
+  const players = [...(state.analytics.players || [])].sort((a, b) => a.player.localeCompare(b.player));
+  if (players.length < 2) {
+    els.comparePage.innerHTML = `<div class="page-heading"><div><h1>Compare Players</h1><p>Not enough player data yet.</p></div></div>`;
+    return;
+  }
+  if (!state.compare.a) state.compare.a = String(players.slice().sort((a, b) => b.impact - a.impact)[0].id);
+  if (!state.compare.b) {
+    const fallback = players.find((player) => String(player.id) !== state.compare.a);
+    state.compare.b = String(fallback?.id ?? players[0].id);
+  }
+  const playerA = players.find((player) => String(player.id) === state.compare.a) || players[0];
+  const playerB = players.find((player) => String(player.id) === state.compare.b) || players[1];
+  const options = players.map((player) => `<option value="${player.id}">${html(player.player)} (${player.team})</option>`).join("");
+
+  els.comparePage.innerHTML = `
+    <div class="page-heading"><div><h1>Compare Players</h1><p>Pick two playoff players to compare season averages side by side.</p></div></div>
+    <article class="panel compare-picker">
+      <div class="compare-card"><img src="${playerA.headshot}" alt="" /><span><strong>${html(playerA.player)}</strong><small>${playerA.team_name}</small></span></div>
+      <span class="compare-vs">VS</span>
+      <div class="compare-card"><img src="${playerB.headshot}" alt="" /><span><strong>${html(playerB.player)}</strong><small>${playerB.team_name}</small></span></div>
+      <select data-compare-select="a" aria-label="First player">${options}</select>
+      <span></span>
+      <select data-compare-select="b" aria-label="Second player">${options}</select>
+    </article>
+    <article class="panel">
+      <div class="table-wrap">
+        <table class="compare-table">
+          <tbody>
+            ${COMPARE_STATS.map(({ key, label }) => {
+              const valueA = Number(playerA[key] || 0);
+              const valueB = Number(playerB[key] || 0);
+              return `
+                <tr>
+                  <td class="${valueA > valueB ? "compare-win" : ""}">${valueA}</td>
+                  <td>${label}</td>
+                  <td class="${valueB > valueA ? "compare-win" : ""}">${valueB}</td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
+    </article>
+  `;
+  els.comparePage.querySelector('[data-compare-select="a"]').value = state.compare.a;
+  els.comparePage.querySelector('[data-compare-select="b"]').value = state.compare.b;
+}
+
 function boxScoreTable(teamName, rows) {
   if (!rows || rows.length === 0) return "";
   return `
@@ -931,6 +1000,13 @@ document.querySelectorAll(".leader-tab").forEach((button) => {
 els.playerTeamFilter.addEventListener("change", () => {
   state.playerFilter = els.playerTeamFilter.value;
   renderPlayersPage();
+});
+
+document.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-compare-select]");
+  if (!select) return;
+  state.compare[select.dataset.compareSelect] = select.value;
+  renderComparePage();
 });
 
 document.addEventListener("click", (event) => {

@@ -21,6 +21,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
 - **Global search** — topbar search box for jumping straight to any player or team profile by name
+- **Player comparison** — side-by-side stat comparison for any two playoff players, with the better value highlighted per category
 
 ## Tech Stack
 
@@ -122,6 +123,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/teams`               | Team list            |
 | `#/teams/<slug>`        | Team profile         |
 | `#/predictions`         | Game prediction tool |
+| `#/compare`              | Player comparison    |
 | `#/alerts`              | News alerts          |
 | `#/settings`            | Settings             |
 

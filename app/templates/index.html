@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=21" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=22" />
   </head>
   <body>
     <div class="app-shell">
@@ -42,6 +42,10 @@
           <a class="side-link" href="#/predictions" data-nav="predictions">
             <span class="nav-icon chart-icon" aria-hidden="true"></span>
             <span>Predictions</span>
+          </a>
+          <a class="side-link" href="#/compare" data-nav="compare">
+            <span class="nav-icon compare-icon" aria-hidden="true"></span>
+            <span>Compare</span>
           </a>
           <a class="side-link" href="#/settings" data-nav="settings">
             <span class="nav-icon gear-icon" aria-hidden="true"></span>
@@ -190,6 +194,7 @@
         <section class="page" id="playerDetailPage"></section>
         <section class="page" id="alertsPage"></section>
         <section class="page" id="predictionsPage"></section>
+        <section class="page" id="comparePage"></section>
         <section class="page" id="settingsPage"></section>
 
         <footer class="footer-note">
@@ -199,6 +204,6 @@
     </div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script src="{{ url_for('static', filename='dashboard.js') }}?v=21"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}?v=22"></script>
   </body>
 </html>
