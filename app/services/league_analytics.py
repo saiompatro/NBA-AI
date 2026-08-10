@@ -70,6 +70,16 @@ _FORM_POINTS_CAP = 2.0      # hard cap on total margin swing from recent form
 _HOME_ROAD_SPLIT_WEIGHT = 0.35  # how much of the location-split delta feeds the margin
 _HOME_ROAD_SPLIT_CAP = 4.0      # hard cap on total margin swing from the split
 
+# Four-factors adjustment. `_advanced_team_stats` already pulls eFG% and TOV% (two of
+# Dean Oliver's Four Factors) for the team-profile pages, but game_prediction ignored
+# them and leaned on net rating alone. Cleaning the Glass and NBA.com Advanced Stats
+# both lead with these per-possession efficiency splits because they isolate *how* a
+# team scores/protects the ball - a dimension season net rating blurs together. Keep
+# the swing small: this refines the pick, it doesn't replace net rating.
+_FOUR_FACTORS_EFG_WEIGHT = 0.4  # each 1pt of eFG% edge is worth ~0.4 pts of margin
+_FOUR_FACTORS_TOV_WEIGHT = 0.5  # each 1pt of TOV% edge (lower is better) is worth ~0.5 pts
+_FOUR_FACTORS_CAP = 3.0         # hard cap on total margin swing from shooting/ballhandling
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -664,8 +674,14 @@ class LeagueAnalyticsService:
         away_split_net = splits.get("road", {}).get(int(away["team_id"]))
         split_edge = home_road_split_edge(home_split_net, away_split_net, home_net, away_net)
 
+        ff_edge = four_factors_edge(
+            float(home.get("efg_pct", 0)), float(away.get("efg_pct", 0)),
+            float(home.get("tov_pct", 0)), float(away.get("tov_pct", 0)),
+        )
+
         expected_home_margin = (
-            (home_net - away_net) + hca - home_injury_pts + away_injury_pts + rest_edge + form_edge + split_edge
+            (home_net - away_net) + hca - home_injury_pts + away_injury_pts
+            + rest_edge + form_edge + split_edge + ff_edge
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -736,6 +752,18 @@ class LeagueAnalyticsService:
                 f"{winner['abbr']} also plays better {where} than their season number alone suggests, adding a bit more edge."
             )
 
+        winner_ff_edge = ff_edge if winner["abbr"] == home["abbr"] else -ff_edge
+        if winner_ff_edge >= 0.4:
+            summary_parts.append(
+                f"{winner['abbr']} also grades out better on our shooting-efficiency and ball-security blend "
+                f"(eFG%/turnovers), which adds a bit more to the number."
+            )
+        elif winner_ff_edge <= -0.4:
+            summary_parts.append(
+                f"{loser['abbr']} actually grades out better on that same shooting/turnover blend, "
+                f"so the pick leans more on overall margin, rest, and matchup context than shot quality."
+            )
+
         if sentiment_gap >= 0.2:
             summary_parts.append(
                 f"News sentiment also favors {winner['abbr']} ({winner_sentiment.get('label', 'Neutral').lower()}, "
@@ -804,6 +832,11 @@ class LeagueAnalyticsService:
                 "away": {"abbr": away["abbr"], "road_net": round(away_split_net, 1) if away_split_net is not None else None},
                 "margin_edge": round(split_edge, 2),
             },
+            "four_factors": {
+                "home": {"abbr": home["abbr"], "efg_pct": home.get("efg_pct"), "tov_pct": home.get("tov_pct")},
+                "away": {"abbr": away["abbr"], "efg_pct": away.get("efg_pct"), "tov_pct": away.get("tov_pct")},
+                "margin_edge": round(ff_edge, 2),
+            },
             "calibration": {
                 "home_court_advantage": round(hca, 2),
                 "scale": round(scale, 2),
@@ -820,6 +853,11 @@ class LeagueAnalyticsService:
                     "label": "Home/road split",
                     "winner": f"{winner_split_net:+.1f} net" if winner_split_net is not None else "N/A",
                     "opponent": f"{loser_split_net:+.1f} net" if loser_split_net is not None else "N/A",
+                },
+                {
+                    "label": "Shooting/turnovers",
+                    "winner": f"{winner.get('efg_pct', 0):.1f}% eFG, {winner.get('tov_pct', 0):.1f}% TOV",
+                    "opponent": f"{loser.get('efg_pct', 0):.1f}% eFG, {loser.get('tov_pct', 0):.1f}% TOV",
                 },
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
             ],
@@ -1252,6 +1290,17 @@ def home_road_split_edge(
     blended_delta = (home_split_net - away_split_net) - (home_season_net - away_season_net)
     edge = blended_delta * _HOME_ROAD_SPLIT_WEIGHT
     return max(-_HOME_ROAD_SPLIT_CAP, min(_HOME_ROAD_SPLIT_CAP, edge))
+
+
+def four_factors_edge(home_efg: float, away_efg: float, home_tov: float, away_tov: float) -> float:
+    """Points of home margin from eFG% and TOV% - two of Dean Oliver's Four Factors.
+    Higher eFG% (shoots more efficiently) and lower TOV% (protects the ball better)
+    both favor that side; missing/zeroed stats simply contribute nothing thanks to
+    the symmetric subtraction, matching the fallback behavior of the other edges."""
+    efg_edge = (home_efg - away_efg) * _FOUR_FACTORS_EFG_WEIGHT
+    tov_edge = (away_tov - home_tov) * _FOUR_FACTORS_TOV_WEIGHT
+    edge = efg_edge + tov_edge
+    return max(-_FOUR_FACTORS_CAP, min(_FOUR_FACTORS_CAP, edge))
 
 
 def simulated_last10(wins: int, losses: int) -> str:
