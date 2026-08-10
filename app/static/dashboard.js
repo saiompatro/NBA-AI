@@ -9,6 +9,8 @@ const state = {
   predictions: {},
   news: {},
   compare: { a: null, b: null },
+  powerRankings: null,
+  powerRankingsLoading: false,
 };
 
 const els = {
@@ -35,6 +37,7 @@ const els = {
   alertsPage: document.getElementById("alertsPage"),
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
+  powerRankingsPage: document.getElementById("powerRankingsPage"),
   settingsPage: document.getElementById("settingsPage"),
 };
 
@@ -156,6 +159,11 @@ function route() {
   if (section === "compare") {
     renderComparePage();
     setActivePage("comparePage", "compare");
+    return;
+  }
+  if (section === "power-rankings") {
+    renderPowerRankingsPage();
+    setActivePage("powerRankingsPage", "power-rankings");
     return;
   }
   if (section === "settings") {
@@ -906,6 +914,60 @@ function renderComparePage() {
   `;
   els.comparePage.querySelector('[data-compare-select="a"]').value = state.compare.a;
   els.comparePage.querySelector('[data-compare-select="b"]').value = state.compare.b;
+}
+
+function renderPowerRankingsPage() {
+  if (!state.powerRankings && !state.powerRankingsLoading) {
+    state.powerRankingsLoading = true;
+    fetch("/api/power-rankings")
+      .then((response) => response.json())
+      .then((data) => {
+        state.powerRankings = data.power_rankings || [];
+        state.powerRankingsLoading = false;
+        renderPowerRankingsPage();
+      })
+      .catch(() => {
+        state.powerRankings = [];
+        state.powerRankingsLoading = false;
+        renderPowerRankingsPage();
+      });
+  }
+
+  if (!state.powerRankings) {
+    els.powerRankingsPage.innerHTML = `
+      <div class="page-heading"><div><h1>Power Rankings</h1><p>Composite ranking blending net rating with recent form.</p></div></div>
+      <article class="panel"><p class="footer-note">Crunching the numbers...</p></article>
+    `;
+    return;
+  }
+
+  const rows = state.powerRankings;
+  els.powerRankingsPage.innerHTML = `
+    <div class="page-heading"><div><h1>Power Rankings</h1><p>All 16 playoff teams ranked by net rating blended with last-10 form, not raw record.</p></div></div>
+    <article class="panel">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Move</th><th>Team</th><th>Record</th><th>NET</th><th>Form</th><th>Score</th><th>Why</th></tr></thead>
+          <tbody>${rows.map((team) => {
+            const moveClass = team.movement > 0 ? "positive" : team.movement < 0 ? "concern" : "";
+            const moveLabel = team.movement > 0 ? `&#9650;${team.movement}` : team.movement < 0 ? `&#9660;${Math.abs(team.movement)}` : "&mdash;";
+            return `
+              <tr>
+                <td>${team.rank}</td>
+                <td class="${moveClass}">${moveLabel}</td>
+                <td><a class="team-cell" href="#/teams/${team.slug}"><img class="logo" src="${team.logo}" alt="" />${html(team.team)}</a></td>
+                <td>${team.record}</td>
+                <td class="${team.net >= 0 ? "positive" : "concern"}">${team.net > 0 ? "+" : ""}${team.net}</td>
+                <td>${team.last10}</td>
+                <td>${team.power_score > 0 ? "+" : ""}${team.power_score}</td>
+                <td class="power-blurb">${html(team.blurb)}</td>
+              </tr>
+            `;
+          }).join("")}</tbody>
+        </table>
+      </div>
+    </article>
+  `;
 }
 
 function boxScoreTable(teamName, rows) {

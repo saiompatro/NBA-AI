@@ -248,6 +248,41 @@ class LeagueAnalyticsService:
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
+    def power_rankings(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """League-wide power ranking across all 16 tracked playoff teams.
+
+        Competing sites (ESPN, NBA.com, The Ringer) publish power rankings that
+        blend net rating with recent form instead of sorting by raw record -
+        we already compute both per team in playoff_teams(), so this combines
+        them into one ordered list and flags teams over/under-ranked relative
+        to their record.
+        """
+        teams = self.playoff_teams(season, news)
+        record_order = sorted(teams, key=lambda row: row["pct"], reverse=True)
+        record_rank = {row["abbr"]: i + 1 for i, row in enumerate(record_order)}
+
+        scored = []
+        for team in teams:
+            form_pct = self._form_wins(team.get("last10", "5-5")) / 10
+            power_score = round(team["net"] + (form_pct - 0.5) * 6, 2)
+            scored.append((power_score, form_pct, team))
+        scored.sort(key=lambda row: row[0], reverse=True)
+
+        rows = []
+        for rank, (power_score, form_pct, team) in enumerate(scored, start=1):
+            movement = record_rank[team["abbr"]] - rank
+            rows.append(
+                {
+                    **team,
+                    "rank": rank,
+                    "power_score": power_score,
+                    "record_rank": record_rank[team["abbr"]],
+                    "movement": movement,
+                    "blurb": power_ranking_blurb(team, form_pct, movement),
+                }
+            )
+        return rows
+
     @lru_cache(maxsize=4)
     def _home_road_net_ratings(self, season: str) -> dict[str, dict[int, float]]:
         """Home-only and road-only net (PLUS_MINUS) rating per team, via the NBA Stats
@@ -1236,6 +1271,20 @@ def streak_from_net(net: float) -> str:
     if net <= -8:
         return "L4"
     return "L1"
+
+
+def power_ranking_blurb(team: dict[str, Any], form_pct: float, movement: int) -> str:
+    """Plain-English one-liner for a team's power ranking slot."""
+    net = team["net"]
+    profile = "an elite two-way profile" if net >= 6 else "a positive net rating" if net >= 0 else "a net rating still trending negative"
+    form_bit = "riding a hot streak" if form_pct >= 0.7 else "cold over their last 10" if form_pct <= 0.3 else "steady form"
+    if movement >= 3:
+        move_bit = f"ranked {movement} spots above their record"
+    elif movement <= -3:
+        move_bit = f"ranked {abs(movement)} spots below their record"
+    else:
+        move_bit = "ranked about where their record says they should be"
+    return f"{team['team']} carries {profile} and are {form_bit}, {move_bit}."
 
 
 def player_trend(points: float, plus_minus: float) -> list[float]:

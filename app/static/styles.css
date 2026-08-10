@@ -280,6 +280,17 @@ a {
   right: 2px;
 }
 
+.rank-icon::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  bottom: 3px;
+  width: 3px;
+  height: 6px;
+  background: currentColor;
+  box-shadow: 6px -4px 0 0 currentColor, 12px -8px 0 0 currentColor;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -1852,6 +1863,12 @@ select {
 
 .compare-table td.compare-win {
   color: var(--green);
+}
+
+.power-blurb {
+  color: var(--muted);
+  font-size: 0.82rem;
+  max-width: 320px;
 }
 
 .footer-note {
