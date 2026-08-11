@@ -11,6 +11,8 @@ const state = {
   compare: { a: null, b: null },
   powerRankings: null,
   powerRankingsLoading: false,
+  bracket: null,
+  bracketLoading: false,
   modelPerformance: null,
   modelPerformanceLoading: false,
   shotQuality: null,
@@ -42,6 +44,7 @@ const els = {
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
+  bracketPage: document.getElementById("bracketPage"),
   modelPerformancePage: document.getElementById("modelPerformancePage"),
   settingsPage: document.getElementById("settingsPage"),
 };
@@ -169,6 +172,11 @@ function route() {
   if (section === "power-rankings") {
     renderPowerRankingsPage();
     setActivePage("powerRankingsPage", "power-rankings");
+    return;
+  }
+  if (section === "bracket") {
+    renderBracketPage();
+    setActivePage("bracketPage", "bracket");
     return;
   }
   if (section === "model") {
@@ -978,6 +986,83 @@ function renderPowerRankingsPage() {
       </div>
     </article>
   `;
+}
+
+const BRACKET_ROUND_ORDER = ["First Round", "Conf. Semifinals", "Conf. Finals"];
+
+function renderBracketPage() {
+  if (!state.bracket && !state.bracketLoading) {
+    state.bracketLoading = true;
+    fetch("/api/table")
+      .then((response) => response.json())
+      .then((data) => {
+        state.bracket = data.playoff_table || [];
+        state.bracketLoading = false;
+        renderBracketPage();
+      })
+      .catch(() => {
+        state.bracket = [];
+        state.bracketLoading = false;
+        renderBracketPage();
+      });
+  }
+
+  const heading = `<div class="page-heading"><div><h1>Playoff Bracket</h1><p>Live series scores by round, straight from the same feed that drives the standings.</p></div></div>`;
+
+  if (!state.bracket) {
+    els.bracketPage.innerHTML = `${heading}<article class="panel"><p class="footer-note">Loading series data...</p></article>`;
+    return;
+  }
+  if (!state.bracket.length) {
+    els.bracketPage.innerHTML = `${heading}<article class="panel"><p class="footer-note">No active playoff series right now.</p></article>`;
+    return;
+  }
+
+  const matchupCard = (row) => `
+    <div class="bracket-matchup">
+      <p class="bracket-teams">${html(row.matchup)}</p>
+      <div class="bracket-series">
+        <span class="${row.leader && row.leader !== "Even" ? "positive" : ""}">${html(row.series)}</span>
+        <span class="bracket-remaining">${row.remaining ? `${row.remaining} to play` : "Series over"}</span>
+      </div>
+    </div>
+  `;
+
+  const finals = state.bracket.filter((row) => row.round === "NBA Finals");
+  const conferences = ["Eastern", "Western"].map((conference) => {
+    const rows = state.bracket.filter((row) => row.round !== "NBA Finals" && String(row.conference || "").startsWith(conference.slice(0, 4)));
+    const columns = BRACKET_ROUND_ORDER.map((roundName) => {
+      const roundRows = rows.filter((row) => (row.round || "Playoffs") === roundName);
+      if (!roundRows.length) return "";
+      return `
+        <div class="bracket-round">
+          <h3>${roundName}</h3>
+          ${roundRows.map(matchupCard).join("")}
+        </div>
+      `;
+    }).join("");
+    const leftovers = rows.filter((row) => !BRACKET_ROUND_ORDER.includes(row.round || ""));
+    const leftoverColumn = leftovers.length
+      ? `<div class="bracket-round"><h3>Playoffs</h3>${leftovers.map(matchupCard).join("")}</div>`
+      : "";
+    return `
+      <article class="panel">
+        <div class="panel-heading"><h2>${conference} Conference</h2></div>
+        <div class="bracket-columns">${columns}${leftoverColumn}</div>
+      </article>
+    `;
+  }).join("");
+
+  const finalsPanel = finals.length
+    ? `
+      <article class="panel bracket-finals">
+        <div class="panel-heading"><h2>NBA Finals</h2></div>
+        <div class="bracket-columns">${finals.map(matchupCard).join("")}</div>
+      </article>
+    `
+    : "";
+
+  els.bracketPage.innerHTML = `${heading}<div class="conference-grid">${conferences}</div>${finalsPanel}`;
 }
 
 function renderModelPerformancePage() {

@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=24" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=25" />
   </head>
   <body>
     <div class="app-shell">
@@ -46,6 +46,10 @@
           <a class="side-link" href="#/power-rankings" data-nav="power-rankings">
             <span class="nav-icon rank-icon" aria-hidden="true"></span>
             <span>Power Rankings</span>
+          </a>
+          <a class="side-link" href="#/bracket" data-nav="bracket">
+            <span class="nav-icon bracket-icon" aria-hidden="true"></span>
+            <span>Bracket</span>
           </a>
           <a class="side-link" href="#/model" data-nav="model">
             <span class="nav-icon target-icon" aria-hidden="true"></span>
@@ -204,6 +208,7 @@
         <section class="page" id="predictionsPage"></section>
         <section class="page" id="comparePage"></section>
         <section class="page" id="powerRankingsPage"></section>
+        <section class="page" id="bracketPage"></section>
         <section class="page" id="modelPerformancePage"></section>
         <section class="page" id="settingsPage"></section>
 

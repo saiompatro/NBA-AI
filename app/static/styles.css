@@ -307,6 +307,26 @@ a {
   box-shadow: 6px -4px 0 0 currentColor, 12px -8px 0 0 currentColor;
 }
 
+.bracket-icon::before {
+  content: "";
+  position: absolute;
+  inset: 3px 5px;
+  border: 2px solid currentColor;
+  border-left: none;
+  border-radius: 0 3px 3px 0;
+}
+
+.bracket-icon::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 4px;
+  height: 2px;
+  background: currentColor;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -1885,6 +1905,59 @@ select {
   color: var(--muted);
   font-size: 0.82rem;
   max-width: 320px;
+}
+
+.bracket-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.bracket-round h3 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.bracket-matchup {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.bracket-teams {
+  margin: 0 0 6px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.bracket-series {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.bracket-remaining {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.bracket-finals {
+  margin-top: 20px;
+}
+
+.bracket-finals .bracket-columns {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 320px));
 }
 
 .footer-note {

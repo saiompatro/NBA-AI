@@ -493,6 +493,9 @@ class LeagueAnalyticsService:
                         "series": f"{high} {high_wins}-{high_losses}",
                         "leader": high if high_wins >= high_losses else low,
                         "remaining": int(item.get("HIGH_SEED_SERIES_REMAINING_G") or 0),
+                        # playoffpicture doesn't expose which round a series is in;
+                        # ponytail: single bucket here, upgrade if NBA Stats adds a round field.
+                        "round": "Playoffs",
                     }
                 )
         return rows[:12] or fallback_playoff_table()
@@ -536,6 +539,7 @@ class LeagueAnalyticsService:
             series = f"{away.get('teamTricode', away_name)} {away_wins}-{away_losses}"
 
         label = str(game.get("gameLabel") or "")
+        sort_round = playoff_round_sort(label)
         return {
             "conference": game.get("seriesConference") or ("East" if "East" in label else "West" if "West" in label else ""),
             "matchup": f"{away_name} vs {home_name}",
@@ -543,7 +547,8 @@ class LeagueAnalyticsService:
             "leader": leader,
             "remaining": 0 if max(home_wins, away_wins) >= 4 else max(0, 4 - max(home_wins, away_wins)),
             "last_game": game.get("gameTimeUTC", ""),
-            "sort_round": playoff_round_sort(label),
+            "sort_round": sort_round,
+            "round": playoff_round_label(sort_round),
         }
 
     @lru_cache(maxsize=1)
@@ -1229,13 +1234,24 @@ def sentiment_label(score: float) -> str:
 
 def playoff_round_sort(label: str) -> int:
     lowered = label.lower()
-    if "first" in lowered or "1st" in lowered:
+    if "first" in lowered or "1st" in lowered or "round 1" in lowered:
         return 1
-    if "semifinal" in lowered or "conf." in lowered:
+    if "semifinal" in lowered:
         return 2
+    if "nba final" in lowered or lowered.strip() == "finals":
+        return 4
     if "final" in lowered:
+        # "Conf. Finals"/"Conference Finals" - checked after "semifinal" so it
+        # doesn't get caught by a bare "conf." substring match.
         return 3
     return 9
+
+
+_ROUND_LABELS = {1: "First Round", 2: "Conf. Semifinals", 3: "Conf. Finals", 4: "NBA Finals"}
+
+
+def playoff_round_label(sort_round: int) -> str:
+    return _ROUND_LABELS.get(sort_round, "Playoffs")
 
 
 def slugify(value: str) -> str:
@@ -1409,10 +1425,10 @@ def synthetic_player_stats(seed: int, rank: int) -> dict[str, float]:
 
 def fallback_playoff_table() -> list[dict[str, Any]]:
     return [
-        {"conference": "East", "matchup": "1 BOS vs 4 NYK", "series": "BOS 2-1", "leader": "BOS", "remaining": 4},
-        {"conference": "East", "matchup": "2 CLE vs 3 MIL", "series": "Tied 2-2", "leader": "Even", "remaining": 3},
-        {"conference": "West", "matchup": "1 OKC vs 4 DEN", "series": "OKC 2-1", "leader": "OKC", "remaining": 4},
-        {"conference": "West", "matchup": "2 MIN vs 3 DAL", "series": "DAL 2-1", "leader": "DAL", "remaining": 4},
+        {"conference": "East", "matchup": "1 BOS vs 4 NYK", "series": "BOS 2-1", "leader": "BOS", "remaining": 4, "round": "First Round"},
+        {"conference": "East", "matchup": "2 CLE vs 3 MIL", "series": "Tied 2-2", "leader": "Even", "remaining": 3, "round": "First Round"},
+        {"conference": "West", "matchup": "1 OKC vs 4 DEN", "series": "OKC 2-1", "leader": "OKC", "remaining": 4, "round": "First Round"},
+        {"conference": "West", "matchup": "2 MIN vs 3 DAL", "series": "DAL 2-1", "leader": "DAL", "remaining": 4, "round": "First Round"},
     ]
 
 
