@@ -100,6 +100,11 @@ def create_app() -> Flask:
                 "model": "XGBoost shot-quality model",
                 "inputs": ["distance", "angle", "defender_distance", "shot_clock", "game_situation"],
                 "input_owner": "nba_api live play-by-play / NBA Stats data layer",
+                "evaluation": {
+                    **shot_model.evaluation(),
+                    "note": "Fit against a synthetic holdout, not real shot outcomes - there's no real-game "
+                    "ground truth for shot quality without proprietary tracking data.",
+                },
             }
         )
 

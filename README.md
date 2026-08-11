@@ -23,7 +23,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Global search** — topbar search box for jumping straight to any player or team profile by name
 - **Player comparison** — side-by-side stat comparison for any two playoff players, with the better value highlighted per category
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
-- **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder)
+- **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder), plus the shot-quality model's R²/MAE on a synthetic holdout (labeled as such — there's no real-shot ground truth to backtest against)
 
 ## Tech Stack
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.metrics import mean_absolute_error, r2_score
 from xgboost import XGBRegressor
 
 
@@ -71,6 +72,7 @@ class ShotQualityModel:
     def __init__(self, model_path: Path | str = "data/shot_quality_xgb.joblib") -> None:
         self.model_path = Path(model_path)
         self.model = self._load_or_train()
+        self._eval = self._evaluate()
 
     def _load_or_train(self) -> XGBRegressor:
         if self.model_path.exists():
@@ -98,3 +100,21 @@ class ShotQualityModel:
     def feature_importance(self) -> dict[str, float]:
         scores = getattr(self.model, "feature_importances_", np.zeros(len(SHOT_FEATURES)))
         return {feature: round(float(score), 4) for feature, score in zip(SHOT_FEATURES, scores)}
+
+    def _evaluate(self, rows: int = 2000, seed: int = 99) -> dict[str, float]:
+        """R2/MAE against a fresh synthetic holdout (different seed than training).
+
+        Unlike the win-probability model, there's no real-game ground truth for
+        shot quality (that requires proprietary tracking data - see README), so
+        this measures fit against the synthetic generator only, not real shots.
+        """
+        x_eval, y_eval = _synthetic_shot_training_data(rows=rows, seed=seed)
+        predictions = self.model.predict(x_eval)
+        return {
+            "r2": round(float(r2_score(y_eval, predictions)), 4),
+            "mae": round(float(mean_absolute_error(y_eval, predictions)), 4),
+            "holdout_rows": rows,
+        }
+
+    def evaluation(self) -> dict[str, float]:
+        return dict(self._eval)

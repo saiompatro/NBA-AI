@@ -13,6 +13,8 @@ const state = {
   powerRankingsLoading: false,
   modelPerformance: null,
   modelPerformanceLoading: false,
+  shotQuality: null,
+  shotQualityLoading: false,
 };
 
 const els = {
@@ -1008,6 +1010,22 @@ function renderModelPerformancePage() {
     return;
   }
 
+  if (!state.shotQuality && !state.shotQualityLoading) {
+    state.shotQualityLoading = true;
+    fetch("/api/shot-quality")
+      .then((response) => response.json())
+      .then((data) => {
+        state.shotQuality = data;
+        state.shotQualityLoading = false;
+        renderModelPerformancePage();
+      })
+      .catch(() => {
+        state.shotQuality = {};
+        state.shotQualityLoading = false;
+        renderModelPerformancePage();
+      });
+  }
+
   const accuracyPct = perf.accuracy != null ? perf.accuracy * 100 : null;
   const baselinePct = perf.baseline_home_win_rate * 100;
   const fitDate = perf.fit_at ? new Date(perf.fit_at).toLocaleDateString() : "--";
@@ -1046,6 +1064,30 @@ function renderModelPerformancePage() {
       <div class="settings-list">
         ${(perf.inputs || []).map((input) => `<div class="simple-row"><span>${html(input)}</span></div>`).join("")}
       </div>
+    </article>
+    ${shotQualityPanel(state.shotQuality)}
+  `;
+}
+
+function shotQualityPanel(shotQuality) {
+  if (!shotQuality || !shotQuality.evaluation) {
+    return `
+      <article class="panel">
+        <div class="panel-heading"><h2>Shot Quality Model</h2></div>
+        <p class="footer-note">Loading...</p>
+      </article>
+    `;
+  }
+  const evalData = shotQuality.evaluation;
+  return `
+    <article class="panel">
+      <div class="panel-heading"><h2>Shot Quality Model</h2></div>
+      <div class="settings-list">
+        <div class="simple-row"><span><strong>R&sup2;</strong><br /><small>Variance explained on a synthetic holdout.</small></span><span class="sentiment-pill neutral">${evalData.r2}</span></div>
+        <div class="simple-row"><span><strong>MAE</strong><br /><small>Mean absolute error in shot-quality points.</small></span><span class="sentiment-pill neutral">${evalData.mae}</span></div>
+        <div class="simple-row"><span><strong>Holdout size</strong><br /><small>Synthetic rows scored, unseen during training.</small></span><span class="sentiment-pill neutral">${evalData.holdout_rows}</span></div>
+      </div>
+      <p class="footer-note">${html(evalData.note || "")}</p>
     </article>
   `;
 }
