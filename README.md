@@ -23,6 +23,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Global search** — topbar search box for jumping straight to any player or team profile by name
 - **Player comparison** — side-by-side stat comparison for any two playoff players, with the better value highlighted per category
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
+- **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder)
 
 ## Tech Stack
 
@@ -104,6 +105,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
+| GET    | `/api/model-performance`                                      | Backtested accuracy/log-loss for the pre-game model |
 | GET    | `/api/game-prediction?away=DET&home=CLE`                      | Matchup prediction with plain-English summary |
 | GET    | `/api/news?type=team&team=DET&term=Detroit+Pistons&refresh=1` | Contextual ESPN news                          |
 | GET    | `/api/shot-quality`                                           | Model metadata and feature importance         |
@@ -127,6 +129,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/predictions`         | Game prediction tool |
 | `#/compare`              | Player comparison    |
 | `#/power-rankings`      | Power rankings        |
+| `#/model`               | Model accuracy         |
 | `#/alerts`              | News alerts          |
 | `#/settings`            | Settings             |
 

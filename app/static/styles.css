@@ -280,6 +280,22 @@ a {
   right: 2px;
 }
 
+.target-icon::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.target-icon::after {
+  content: "";
+  position: absolute;
+  inset: 8px;
+  background: currentColor;
+  border-radius: 50%;
+}
+
 .rank-icon::before {
   content: "";
   position: absolute;

@@ -11,6 +11,8 @@ const state = {
   compare: { a: null, b: null },
   powerRankings: null,
   powerRankingsLoading: false,
+  modelPerformance: null,
+  modelPerformanceLoading: false,
 };
 
 const els = {
@@ -38,6 +40,7 @@ const els = {
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
+  modelPerformancePage: document.getElementById("modelPerformancePage"),
   settingsPage: document.getElementById("settingsPage"),
 };
 
@@ -166,6 +169,11 @@ function route() {
     setActivePage("powerRankingsPage", "power-rankings");
     return;
   }
+  if (section === "model") {
+    renderModelPerformancePage();
+    setActivePage("modelPerformancePage", "model");
+    return;
+  }
   if (section === "settings") {
     renderSettingsPage();
     setActivePage("settingsPage", "settings");
@@ -198,7 +206,7 @@ function renderKpis() {
     { icon: "trophy", tone: "#fff4d9", color: "#f7a614", value: "16", label: "Playoff Teams" },
     { icon: "calendar", tone: "#eaf1ff", color: "#075ed9", value: state.live?.is_live ? "1" : "--", label: "Live Games" },
     { icon: "ball", tone: "#fff0e8", color: "#f26b1d", value: gamesToday, label: "Games Today" },
-    { icon: "trend", tone: "#ffeee7", color: "#f26b1d", value: "78.4%", label: "Model Accuracy" },
+    { icon: "trend", tone: "#ffeee7", color: "#f26b1d", value: state.modelPerformance?.accuracy != null ? `${(state.modelPerformance.accuracy * 100).toFixed(1)}%` : "--", label: "Model Accuracy" },
     { icon: "database", tone: "#e8f8ef", color: "#16a05d", value: "2.1M+", label: "Events Analyzed" },
   ];
   els.kpiGrid.innerHTML = cards
@@ -970,6 +978,78 @@ function renderPowerRankingsPage() {
   `;
 }
 
+function renderModelPerformancePage() {
+  if (!state.modelPerformance && !state.modelPerformanceLoading) {
+    state.modelPerformanceLoading = true;
+    fetch("/api/model-performance")
+      .then((response) => response.json())
+      .then((data) => {
+        state.modelPerformance = data;
+        state.modelPerformanceLoading = false;
+        renderModelPerformancePage();
+      })
+      .catch(() => {
+        state.modelPerformance = {};
+        state.modelPerformanceLoading = false;
+        renderModelPerformancePage();
+      });
+  }
+
+  const heading = `<div class="page-heading"><div><h1>Model Accuracy</h1><p>How the pre-game win-probability model performs against real results, not just this matchup.</p></div></div>`;
+
+  if (!state.modelPerformance) {
+    els.modelPerformancePage.innerHTML = `${heading}<article class="panel"><p class="footer-note">Loading backtest results...</p></article>`;
+    return;
+  }
+
+  const perf = state.modelPerformance;
+  if (!perf.calibrated) {
+    els.modelPerformancePage.innerHTML = `${heading}<article class="panel"><p class="footer-note">Not yet calibrated against real games — run <code>scripts/calibrate_pregame.py</code> to fit and unlock backtest numbers.</p></article>`;
+    return;
+  }
+
+  const accuracyPct = perf.accuracy != null ? perf.accuracy * 100 : null;
+  const baselinePct = perf.baseline_home_win_rate * 100;
+  const fitDate = perf.fit_at ? new Date(perf.fit_at).toLocaleDateString() : "--";
+
+  els.modelPerformancePage.innerHTML = `
+    <div class="page-heading"><div><h1>Model Accuracy</h1><p>Backtested against ${perf.games_backtested ?? "--"} real games across ${(perf.seasons || []).join(", ") || "recent seasons"}.</p></div></div>
+    <section class="kpi-grid">
+      <article class="kpi-card">
+        <span class="kpi-icon" style="background:#eaf1ff;color:#075ed9">${iconSvg("trend")}</span>
+        <div><strong>${accuracyPct != null ? accuracyPct.toFixed(1) : "--"}%</strong><span>Winner Pick Accuracy</span></div>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-icon" style="background:#fff4d9;color:#f7a614">${iconSvg("database")}</span>
+        <div><strong>${perf.log_loss != null ? perf.log_loss.toFixed(3) : "--"}</strong><span>Log Loss</span></div>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-icon" style="background:#fff0e8;color:#f26b1d">${iconSvg("calendar")}</span>
+        <div><strong>${perf.games_backtested ?? "--"}</strong><span>Games Backtested</span></div>
+      </article>
+      <article class="kpi-card">
+        <span class="kpi-icon" style="background:#e8f8ef;color:#16a05d">${iconSvg("trophy")}</span>
+        <div><strong>${accuracyPct != null ? `+${(accuracyPct - baselinePct).toFixed(1)}pt` : "--"}</strong><span>Vs. Home-Favorite Baseline</span></div>
+      </article>
+    </section>
+    <article class="panel">
+      <div class="panel-heading"><h2>How it's scored</h2></div>
+      <div class="settings-list">
+        <div class="simple-row"><span><strong>Home-court advantage</strong><br /><small>Fitted margin edge for the home team.</small></span><span class="sentiment-pill neutral">${perf.home_court_advantage} pts</span></div>
+        <div class="simple-row"><span><strong>Probability scale</strong><br /><small>Margin-to-probability sigmoid steepness.</small></span><span class="sentiment-pill neutral">${perf.scale}</span></div>
+        <div class="simple-row"><span><strong>Last calibrated</strong><br /><small>Re-run against the latest results periodically.</small></span><span class="sentiment-pill neutral">${fitDate}</span></div>
+        <div class="simple-row"><span><strong>Baseline compared against</strong><br /><small>Long-run NBA home-team win rate.</small></span><span class="sentiment-pill neutral">${baselinePct.toFixed(0)}%</span></div>
+      </div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><h2>Inputs feeding the pick</h2></div>
+      <div class="settings-list">
+        ${(perf.inputs || []).map((input) => `<div class="simple-row"><span>${html(input)}</span></div>`).join("")}
+      </div>
+    </article>
+  `;
+}
+
 function boxScoreTable(teamName, rows) {
   if (!rows || rows.length === 0) return "";
   return `
@@ -1194,6 +1274,15 @@ fetch("/api/analytics")
   .catch(() => {
     els.liveStatusBody.innerHTML = "<strong>Unable to load analytics.</strong>";
   });
+
+fetch("/api/model-performance")
+  .then((response) => response.json())
+  .then((data) => {
+    state.modelPerformance = data;
+    renderKpis();
+    if (location.hash.replace(/^#\/?/, "") === "model") renderModelPerformancePage();
+  })
+  .catch(() => {});
 
 fetch("/api/prediction")
   .then((response) => response.json())

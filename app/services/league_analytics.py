@@ -155,6 +155,40 @@ SCHEDULE_TEAM_ALIASES = {"NY": "NYK", "SA": "SAS"}
 class LeagueAnalyticsService:
     timeout: int = 5
 
+    def model_performance(self) -> dict[str, Any]:
+        """Backtest transparency for the pre-game model (a la 538/Inpredictable).
+
+        `scripts/calibrate_pregame.py` already fits home-court-advantage/scale
+        against real results and writes accuracy + log loss to
+        `data/pregame_calibration.json` — it just never made it past the
+        per-prediction `calibration` field into a page a user can check without
+        running a matchup first.
+        """
+        try:
+            data = json.loads(_CALIBRATION_PATH.read_text())
+        except Exception:
+            data = {}
+        return {
+            "calibrated": bool(data),
+            "accuracy": data.get("fit_accuracy"),
+            "log_loss": data.get("fit_log_loss"),
+            "games_backtested": data.get("games_used"),
+            "seasons": data.get("seasons", []),
+            "fit_at": data.get("fit_at"),
+            "home_court_advantage": data.get("home_court_advantage", _DEFAULT_CALIBRATION["home_court_advantage"]),
+            "scale": data.get("scale", _DEFAULT_CALIBRATION["scale"]),
+            "baseline_home_win_rate": 0.54,
+            "inputs": [
+                "team net rating",
+                "injuries (news + play-by-play)",
+                "rest / back-to-back fatigue",
+                "recent form (last-10)",
+                "home/road net rating split",
+                "four factors (eFG%, TOV%)",
+                "news sentiment (context only, not scored)",
+            ],
+        }
+
     def overview(self) -> dict[str, Any]:
         season = current_season()
         news = self._aggregated_news()
