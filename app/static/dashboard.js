@@ -716,6 +716,8 @@ function renderTeamDetail(slug) {
           <div><span>EFG%</span><strong>${team.efg_pct}</strong></div>
           <div><span>TS%</span><strong>${team.ts_pct}</strong></div>
           <div><span>TOV%</span><strong>${team.tov_pct}</strong></div>
+          <div><span>CLUTCH REC</span><strong>${team.clutch_record}</strong></div>
+          <div><span>CLUTCH NET</span><strong class="${team.clutch_net >= 0 ? "positive" : "concern"}">${team.clutch_net > 0 ? "+" : ""}${team.clutch_net}</strong></div>
         </div>
         <div class="mini-panel" style="margin-top:14px">
           <h4>Offensive Trend</h4>

@@ -80,6 +80,13 @@ _FOUR_FACTORS_EFG_WEIGHT = 0.4  # each 1pt of eFG% edge is worth ~0.4 pts of mar
 _FOUR_FACTORS_TOV_WEIGHT = 0.5  # each 1pt of TOV% edge (lower is better) is worth ~0.5 pts
 _FOUR_FACTORS_CAP = 3.0         # hard cap on total margin swing from shooting/ballhandling
 
+# Clutch-time (last 5 min, score within 5 pts) team performance. NBA.com Stats' own
+# "Clutch" tab and Cleaning the Glass both lead with this split because a team's
+# full-game net rating can hide who actually closes games out - our team profiles
+# had every other per-possession cut (four factors, home/road) but not this one.
+_CLUTCH_TIME = "Last 5 Minutes"
+_CLUTCH_POINT_DIFF = "5"
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -233,6 +240,7 @@ class LeagueAnalyticsService:
             stats_by_id = {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
         advanced_by_id = self._advanced_team_stats(season)
+        clutch_by_id = self._clutch_team_stats(season)
 
         rows = []
         for team in PLAYOFF_SEEDS_2026:
@@ -245,6 +253,8 @@ class LeagueAnalyticsService:
             sentiment = self._sentiment_for_terms(news, [team["team"], team["abbr"]], plus_minus)
             adv = advanced_by_id.get(int(team["team_id"]))
             fallback_adv = advanced_fallback(plus_minus)
+            clutch = clutch_by_id.get(int(team["team_id"]))
+            fallback_clutch = clutch_fallback(plus_minus)
             rows.append(
                 {
                     **team,
@@ -268,6 +278,8 @@ class LeagueAnalyticsService:
                     "efg_pct": round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"],
                     "ts_pct": round(float(adv["TS_PCT"]) * 100, 1) if adv else fallback_adv["ts_pct"],
                     "tov_pct": round(float(adv["TM_TOV_PCT"]) * 100, 1) if adv else fallback_adv["tov_pct"],
+                    "clutch_record": f"{int(clutch['W'])}-{int(clutch['L'])}" if clutch else fallback_clutch["clutch_record"],
+                    "clutch_net": round(float(clutch["PLUS_MINUS"]), 1) if clutch else fallback_clutch["clutch_net"],
                     "last10": simulated_last10(playoff_wins, playoff_losses),
                     "streak": streak_from_net(plus_minus),
                     "sentiment": sentiment,
@@ -288,6 +300,26 @@ class LeagueAnalyticsService:
         if frame.empty:
             return {}
         for column in ["TEAM_ID", "OFF_RATING", "DEF_RATING", "PACE", "EFG_PCT", "TS_PCT", "TM_TOV_PCT"]:
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+        return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
+
+    @lru_cache(maxsize=4)
+    def _clutch_team_stats(self, season: str) -> dict[int, dict[str, Any]]:
+        """Clutch-time (last 5 min, score within 5 pts) record and net rating per team.
+
+        Dedicated NBA Stats endpoint (leaguedashteamclutch) for the same split NBA.com's
+        own "Clutch" tab shows - see the `_CLUTCH_TIME` comment above for why it's worth
+        having next to the season-long advanced stats.
+        """
+        params = common_dash_params(season, "Playoffs", "PerGame")
+        params["AheadBehind"] = "Ahead or Behind"
+        params["ClutchTime"] = _CLUTCH_TIME
+        params["PointDiff"] = _CLUTCH_POINT_DIFF
+        frame = self._stats_frame("leaguedashteamclutch", params, "LeagueDashTeamClutch")
+        if frame.empty:
+            return {}
+        for column in ["TEAM_ID", "W", "L", "PLUS_MINUS"]:
             if column in frame:
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
@@ -1315,6 +1347,12 @@ def advanced_fallback(net_rating: float) -> dict[str, float]:
         "ts_pct": 56.5,
         "tov_pct": 13.0,
     }
+
+
+def clutch_fallback(net_rating: float) -> dict[str, Any]:
+    """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
+    unreachable, derived from season net rating so it stays internally consistent."""
+    return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:
