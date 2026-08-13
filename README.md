@@ -18,6 +18,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
 - **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and shooting-efficiency/turnover (four factors) splits
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
+- **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
 - **Global search** — topbar search box for jumping straight to any player or team profile by name
@@ -103,6 +104,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/analytics`                                              | Full analytics bundle                         |
 | GET    | `/api/table`                                                  | Live playoff series scores by round (feeds the bracket page) |
 | GET    | `/api/players`                                                | Playoff player stats                          |
+| GET    | `/api/players/<id>/game-log`                                  | Real last-10 boxscore log for a player (playoffs, falling back to regular season) |
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |

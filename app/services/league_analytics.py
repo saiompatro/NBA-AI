@@ -439,6 +439,48 @@ class LeagueAnalyticsService:
                 )
         return rows
 
+    def player_game_log(self, player_id: int, season: str) -> list[dict[str, Any]]:
+        """Real per-game boxscore log (most recent first), playoffs first with a
+        regular-season fallback so the panel still has content in the off-season
+        gap between a player's team getting eliminated and the next tip-off."""
+        frame = self._player_game_log_frame(player_id, season, "Playoffs")
+        if frame.empty:
+            frame = self._player_game_log_frame(player_id, season, "Regular Season")
+        if frame.empty:
+            return []
+
+        numeric = ["MIN", "PTS", "REB", "AST", "STL", "BLK", "PLUS_MINUS", "FG_PCT", "FG3_PCT"]
+        for column in numeric:
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+
+        games = []
+        for item in frame.head(10).to_dict("records"):
+            games.append(
+                {
+                    "date": str(item.get("GAME_DATE", "")),
+                    "matchup": str(item.get("MATCHUP", "")),
+                    "result": str(item.get("WL", "")),
+                    "min": round(float(item.get("MIN", 0)), 1),
+                    "pts": round(float(item.get("PTS", 0)), 1),
+                    "reb": round(float(item.get("REB", 0)), 1),
+                    "ast": round(float(item.get("AST", 0)), 1),
+                    "stl": round(float(item.get("STL", 0)), 1),
+                    "blk": round(float(item.get("BLK", 0)), 1),
+                    "fg_pct": round(float(item.get("FG_PCT", 0)) * 100, 1),
+                    "plus_minus": round(float(item.get("PLUS_MINUS", 0)), 1),
+                }
+            )
+        return games
+
+    @lru_cache(maxsize=64)
+    def _player_game_log_frame(self, player_id: int, season: str, season_type: str) -> pd.DataFrame:
+        return self._stats_frame(
+            "playergamelog",
+            {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
+            "PlayerGameLog",
+        )
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()

@@ -9,6 +9,7 @@ const state = {
   predictions: {},
   news: {},
   compare: { a: null, b: null },
+  gameLog: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -670,6 +671,58 @@ function loadEntityNews({ key, type, team, terms, refresh = false }) {
     });
 }
 
+function gameLogPanel(playerId) {
+  return `
+    <article class="profile-panel">
+      <div class="panel-heading"><h2>Recent Games</h2></div>
+      <div id="game-log-${playerId}">${renderGameLogContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderGameLogContent(playerId) {
+  const entry = state.gameLog[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading recent games...</p>`;
+  if (entry.error) return `<p class="footer-note">Recent games unavailable right now.</p>`;
+  const games = entry.games || [];
+  if (!games.length) return `<p class="footer-note">No recent game log found for this player.</p>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Date</th><th>Matchup</th><th>W/L</th><th>MIN</th><th>PTS</th><th>REB</th><th>AST</th><th>+/-</th></tr></thead>
+        <tbody>${games.map((game) => `
+          <tr>
+            <td>${html(game.date)}</td>
+            <td>${html(game.matchup)}</td>
+            <td class="${game.result === "W" ? "positive" : "concern"}">${html(game.result)}</td>
+            <td>${game.min}</td>
+            <td>${game.pts}</td>
+            <td>${game.reb}</td>
+            <td>${game.ast}</td>
+            <td class="${game.plus_minus >= 0 ? "positive" : "concern"}">${game.plus_minus > 0 ? "+" : ""}${game.plus_minus}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadGameLog(playerId) {
+  state.gameLog[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/game-log`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.gameLog[playerId] = { loading: false, error: false, games: data.games || [] };
+      const target = document.getElementById(`game-log-${playerId}`);
+      if (target) target.innerHTML = renderGameLogContent(playerId);
+    })
+    .catch(() => {
+      state.gameLog[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`game-log-${playerId}`);
+      if (target) target.innerHTML = renderGameLogContent(playerId);
+    });
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -775,9 +828,11 @@ function renderPlayerDetail(slug) {
         <p style="color:var(--muted);font-weight:700;margin:16px 0 0">Sentiment: <span class="${player.sentiment.label.toLowerCase()}">${player.sentiment.label}</span></p>
       </aside>
     </section>
+    ${gameLogPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
+  if (!state.gameLog[player.id]) loadGameLog(player.id);
 }
 
 function renderAlertsPage() {
