@@ -823,6 +823,9 @@ function renderPlayerDetail(slug) {
           <div><span>3P%</span><strong>${player.fg3_pct}</strong></div>
           <div><span>STL</span><strong>${player.stl}</strong></div>
           <div><span>BLK</span><strong>${player.blk}</strong></div>
+          <div><span>TS%</span><strong>${player.ts_pct}</strong></div>
+          <div><span>USG%</span><strong>${player.usg_pct}</strong></div>
+          <div><span>PIE</span><strong>${player.pie}</strong></div>
           <div><span>Impact</span><strong>${player.impact}</strong></div>
         </div>
         <p style="color:var(--muted);font-weight:700;margin:16px 0 0">Sentiment: <span class="${player.sentiment.label.toLowerCase()}">${player.sentiment.label}</span></p>
@@ -938,6 +941,9 @@ const COMPARE_STATS = [
   { key: "min", label: "MIN" },
   { key: "fg_pct", label: "FG%" },
   { key: "fg3_pct", label: "3P%" },
+  { key: "ts_pct", label: "TS%" },
+  { key: "usg_pct", label: "USG%" },
+  { key: "pie", label: "PIE" },
   { key: "plus_minus", label: "+/-" },
   { key: "impact", label: "Impact" },
 ];

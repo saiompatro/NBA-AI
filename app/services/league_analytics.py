@@ -87,6 +87,11 @@ _FOUR_FACTORS_CAP = 3.0         # hard cap on total margin swing from shooting/b
 _CLUTCH_TIME = "Last 5 Minutes"
 _CLUTCH_POINT_DIFF = "5"
 
+# Per-player advanced efficiency. Teams already got off/def rating, pace, and four
+# factors (see `_advanced_team_stats`) but players were still raw per-game box totals -
+# NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
+# usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -401,6 +406,7 @@ class LeagueAnalyticsService:
             + frame.get("BLK", 0) * 1.8
             + frame.get("PLUS_MINUS", 0) * 0.4
         )
+        advanced_by_player = self._advanced_player_stats(season)
 
         rows = []
         for team_id, group in frame.groupby("TEAM_ID"):
@@ -409,6 +415,11 @@ class LeagueAnalyticsService:
             for index, item in enumerate(rotation.to_dict("records")):
                 name = item.get("PLAYER_NAME", "Player")
                 plus_minus = float(item.get("PLUS_MINUS", 0))
+                impact = float(item.get("IMPACT", 0))
+                minutes = float(item.get("MIN", 0))
+                points = float(item.get("PTS", 0))
+                adv = advanced_by_player.get(int(item.get("PLAYER_ID", 0)))
+                fallback_adv = player_advanced_fallback(points, minutes, impact)
                 rows.append(
                     {
                         "id": int(item.get("PLAYER_ID", 0)),
@@ -422,8 +433,8 @@ class LeagueAnalyticsService:
                         "rotation_rank": index + 1,
                         "headshot": player_headshot_url(int(item.get("PLAYER_ID", 0))),
                         "gp": int(item.get("GP", 0)),
-                        "min": round(float(item.get("MIN", 0)), 1),
-                        "pts": round(float(item.get("PTS", 0)), 1),
+                        "min": round(minutes, 1),
+                        "pts": round(points, 1),
                         "reb": round(float(item.get("REB", 0)), 1),
                         "ast": round(float(item.get("AST", 0)), 1),
                         "stl": round(float(item.get("STL", 0)), 1),
@@ -432,12 +443,30 @@ class LeagueAnalyticsService:
                         "fg3_pct": round(float(item.get("FG3_PCT", 0)) * 100, 1),
                         "ft_pct": round(float(item.get("FT_PCT", 0)) * 100, 1),
                         "plus_minus": round(plus_minus, 1),
-                        "impact": round(float(item.get("IMPACT", 0)), 1),
+                        "impact": round(impact, 1),
+                        "ts_pct": round(float(adv["TS_PCT"]) * 100, 1) if adv else fallback_adv["ts_pct"],
+                        "usg_pct": round(float(adv["USG_PCT"]) * 100, 1) if adv else fallback_adv["usg_pct"],
+                        "pie": round(float(adv["PIE"]) * 100, 1) if adv else fallback_adv["pie"],
                         "trend": player_trend(float(item.get("PTS", 0)), float(item.get("PLUS_MINUS", 0))),
                         "sentiment": self._sentiment_for_terms(news, [str(name), team["abbr"], team["team"]], plus_minus),
                     }
                 )
         return rows
+
+    @lru_cache(maxsize=4)
+    def _advanced_player_stats(self, season: str) -> dict[int, dict[str, Any]]:
+        """True-shooting%, usage%, and Player Impact Estimate per player (NBA Stats
+        MeasureType=Advanced) - see the module comment above `playoff_players` for why
+        this is worth having next to the raw per-game box totals."""
+        params = common_dash_params(season, "Playoffs", "PerGame")
+        params["MeasureType"] = "Advanced"
+        frame = self._stats_frame("leaguedashplayerstats", params, "LeagueDashPlayerStats")
+        if frame.empty:
+            return {}
+        for column in ["PLAYER_ID", "TS_PCT", "USG_PCT", "PIE"]:
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+        return {int(row["PLAYER_ID"]): row for row in frame.to_dict("records")}
 
     def player_game_log(self, player_id: int, season: str) -> list[dict[str, Any]]:
         """Real per-game boxscore log (most recent first), playoffs first with a
@@ -501,6 +530,7 @@ class LeagueAnalyticsService:
                 rank = index + 1
                 stats = synthetic_player_stats(team["seed"], rank)
                 plus_minus = stats["plus_minus"]
+                adv_fallback = player_advanced_fallback(stats["pts"], stats["min"], stats["impact"])
                 rows.append(
                     {
                         "id": int(athlete.get("id") or abs(hash(f"{team['abbr']}-{name}")) % 10000000),
@@ -525,6 +555,9 @@ class LeagueAnalyticsService:
                         "ft_pct": stats["ft_pct"],
                         "plus_minus": plus_minus,
                         "impact": stats["impact"],
+                        "ts_pct": adv_fallback["ts_pct"],
+                        "usg_pct": adv_fallback["usg_pct"],
+                        "pie": adv_fallback["pie"],
                         "trend": player_trend(stats["pts"], plus_minus),
                         "sentiment": self._sentiment_for_terms(news, [str(name), team["abbr"], team["team"]], plus_minus),
                     }
@@ -1388,6 +1421,17 @@ def advanced_fallback(net_rating: float) -> dict[str, float]:
         "efg_pct": 53.0,
         "ts_pct": 56.5,
         "tov_pct": 13.0,
+    }
+
+
+def player_advanced_fallback(pts: float, minutes: float, impact: float) -> dict[str, float]:
+    """Deterministic TS%/USG%/PIE stand-ins when the NBA Stats Advanced player
+    endpoint is unreachable, derived from box totals already on hand so the
+    fallback stays internally consistent (same approach as `advanced_fallback`)."""
+    return {
+        "ts_pct": round(min(70.0, max(45.0, 52.0 + pts * 0.15)), 1),
+        "usg_pct": round(min(38.0, max(10.0, (pts / max(minutes, 1.0)) * 85.0)), 1),
+        "pie": round(min(30.0, max(3.0, impact * 0.35)), 1),
     }
 
 
