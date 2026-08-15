@@ -1366,6 +1366,20 @@ td {
   font-weight: 500;
 }
 
+.filter-group {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rank-badge {
+  display: inline-block;
+  min-width: 20px;
+  margin-right: 8px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
 select {
   min-height: 40px;
   min-width: 210px;

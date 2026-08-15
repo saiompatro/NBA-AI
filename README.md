@@ -18,6 +18,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
 - **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and shooting-efficiency/turnover (four factors) splits
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
+- **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering)
 - **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`

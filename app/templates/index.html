@@ -187,7 +187,20 @@
               <h1>Players</h1>
               <p>Starting 5 and bench rotations for every playoff team.</p>
             </div>
-            <select id="playerTeamFilter" aria-label="Filter players by team"></select>
+            <div class="filter-group">
+              <select id="playerTeamFilter" aria-label="Filter players by team"></select>
+              <select id="playerSortFilter" aria-label="Sort players by stat">
+                <option value="default">Sort: Roster Order</option>
+                <option value="pts">Sort: PTS</option>
+                <option value="reb">Sort: REB</option>
+                <option value="ast">Sort: AST</option>
+                <option value="stl">Sort: STL</option>
+                <option value="blk">Sort: BLK</option>
+                <option value="ts_pct">Sort: TS%</option>
+                <option value="usg_pct">Sort: USG%</option>
+                <option value="pie">Sort: PIE</option>
+              </select>
+            </div>
           </div>
           <div id="playersGrid" class="player-grid"></div>
         </section>
@@ -219,6 +232,6 @@
     </div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script src="{{ url_for('static', filename='dashboard.js') }}?v=24"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}?v=25"></script>
   </body>
 </html>

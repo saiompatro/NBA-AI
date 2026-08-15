@@ -6,6 +6,7 @@ const state = {
   conference: "Eastern",
   leader: "pts",
   playerFilter: "ALL",
+  playerSort: "default",
   predictions: {},
   news: {},
   compare: { a: null, b: null },
@@ -37,6 +38,7 @@ const els = {
   globalSearch: document.getElementById("globalSearch"),
   searchResults: document.getElementById("searchResults"),
   playerTeamFilter: document.getElementById("playerTeamFilter"),
+  playerSortFilter: document.getElementById("playerSortFilter"),
   playersGrid: document.getElementById("playersGrid"),
   teamsGrid: document.getElementById("teamsGrid"),
   teamDetailPage: document.getElementById("teamDetailPage"),
@@ -558,17 +560,22 @@ function renderFullStandings() {
   }).join("");
 }
 
+const PLAYER_SORT_LABELS = { pts: "PTS", reb: "REB", ast: "AST", stl: "STL", blk: "BLK", ts_pct: "TS%", usg_pct: "USG%", pie: "PIE" };
+
 function renderPlayersPage() {
+  const sortKey = state.playerSort;
   const rows = (state.analytics.players || [])
     .filter((player) => state.playerFilter === "ALL" || player.team === state.playerFilter)
-    .sort((a, b) => a.team.localeCompare(b.team) || a.rotation_rank - b.rotation_rank);
-  els.playersGrid.innerHTML = rows.map((player) => `
+    .sort((a, b) => sortKey === "default"
+      ? a.team.localeCompare(b.team) || a.rotation_rank - b.rotation_rank
+      : (b[sortKey] ?? 0) - (a[sortKey] ?? 0));
+  els.playersGrid.innerHTML = rows.map((player, index) => `
     <a class="player-card" href="${playerRoute(player)}">
       <img src="${player.headshot}" alt="" />
       <div>
         <div class="card-top">
           <div>
-            <h3>${html(player.player)}</h3>
+            <h3>${sortKey === "default" ? "" : `<span class="rank-badge">${index + 1}</span>`}${html(player.player)}</h3>
             <p>${player.team_name} - ${player.team}</p>
           </div>
           <span class="role-badge">${player.role}</span>
@@ -577,6 +584,7 @@ function renderPlayersPage() {
           <div><span>PTS</span><strong>${player.pts}</strong></div>
           <div><span>REB</span><strong>${player.reb}</strong></div>
           <div><span>AST</span><strong>${player.ast}</strong></div>
+          ${["default", "pts", "reb", "ast"].includes(sortKey) ? "" : `<div><span>${PLAYER_SORT_LABELS[sortKey]}</span><strong>${player[sortKey]}</strong></div>`}
         </div>
       </div>
     </a>
@@ -1331,6 +1339,11 @@ document.querySelectorAll(".leader-tab").forEach((button) => {
 
 els.playerTeamFilter.addEventListener("change", () => {
   state.playerFilter = els.playerTeamFilter.value;
+  renderPlayersPage();
+});
+
+els.playerSortFilter.addEventListener("change", () => {
+  state.playerSort = els.playerSortFilter.value;
   renderPlayersPage();
 });
 
