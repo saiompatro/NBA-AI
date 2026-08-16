@@ -777,6 +777,8 @@ function renderTeamDetail(slug) {
           <div><span>EFG%</span><strong>${team.efg_pct}</strong></div>
           <div><span>TS%</span><strong>${team.ts_pct}</strong></div>
           <div><span>TOV%</span><strong>${team.tov_pct}</strong></div>
+          <div><span>OREB%</span><strong>${team.oreb_pct}</strong></div>
+          <div><span>FT RATE</span><strong>${team.ftr}</strong></div>
           <div><span>CLUTCH REC</span><strong>${team.clutch_record}</strong></div>
           <div><span>CLUTCH NET</span><strong class="${team.clutch_net >= 0 ? "positive" : "concern"}">${team.clutch_net > 0 ? "+" : ""}${team.clutch_net}</strong></div>
         </div>

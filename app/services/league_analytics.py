@@ -70,15 +70,20 @@ _FORM_POINTS_CAP = 2.0      # hard cap on total margin swing from recent form
 _HOME_ROAD_SPLIT_WEIGHT = 0.35  # how much of the location-split delta feeds the margin
 _HOME_ROAD_SPLIT_CAP = 4.0      # hard cap on total margin swing from the split
 
-# Four-factors adjustment. `_advanced_team_stats` already pulls eFG% and TOV% (two of
-# Dean Oliver's Four Factors) for the team-profile pages, but game_prediction ignored
-# them and leaned on net rating alone. Cleaning the Glass and NBA.com Advanced Stats
-# both lead with these per-possession efficiency splits because they isolate *how* a
-# team scores/protects the ball - a dimension season net rating blurs together. Keep
-# the swing small: this refines the pick, it doesn't replace net rating.
-_FOUR_FACTORS_EFG_WEIGHT = 0.4  # each 1pt of eFG% edge is worth ~0.4 pts of margin
-_FOUR_FACTORS_TOV_WEIGHT = 0.5  # each 1pt of TOV% edge (lower is better) is worth ~0.5 pts
-_FOUR_FACTORS_CAP = 3.0         # hard cap on total margin swing from shooting/ballhandling
+# Four-factors adjustment. `_advanced_team_stats` only pulled eFG% and TOV% - two of
+# Dean Oliver's actual Four Factors (eFG%, TOV%, OREB%, FT rate) - despite the naming.
+# Cleaning the Glass, Basketball-Reference, and NBA.com's own "Four Factors" tab all
+# show the full set because each isolates a different way a team wins possessions:
+# shooting, ball security, extra shots via offensive boards, and free points at the
+# line. OREB_PCT rides along on the Advanced endpoint we already call; FT rate is
+# derived from FTA/FGA on the base team-stats frame we already fetch, so completing
+# the set costs no extra API calls. Keep the swing small: this refines the pick, it
+# doesn't replace net rating.
+_FOUR_FACTORS_EFG_WEIGHT = 0.4   # each 1pt of eFG% edge is worth ~0.4 pts of margin
+_FOUR_FACTORS_TOV_WEIGHT = 0.5   # each 1pt of TOV% edge (lower is better) is worth ~0.5 pts
+_FOUR_FACTORS_OREB_WEIGHT = 0.25  # each 1pt of OREB% edge is worth ~0.25 pts of margin
+_FOUR_FACTORS_FTR_WEIGHT = 0.15   # each 1pt of FT-rate edge is worth ~0.15 pts of margin
+_FOUR_FACTORS_CAP = 4.0          # hard cap on total margin swing from all four factors
 
 # Clutch-time (last 5 min, score within 5 pts) team performance. NBA.com Stats' own
 # "Clutch" tab and Cleaning the Glass both lead with this split because a team's
@@ -239,7 +244,7 @@ class LeagueAnalyticsService:
         )
         stats_by_id: dict[int, dict[str, Any]] = {}
         if not frame.empty:
-            for column in ["TEAM_ID", "W", "L", "PTS", "REB", "AST", "PLUS_MINUS", "FG_PCT", "STL", "BLK", "TOV"]:
+            for column in ["TEAM_ID", "W", "L", "PTS", "REB", "AST", "PLUS_MINUS", "FG_PCT", "STL", "BLK", "TOV", "FTA", "FGA"]:
                 if column in frame:
                     frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
             stats_by_id = {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
@@ -260,6 +265,8 @@ class LeagueAnalyticsService:
             fallback_adv = advanced_fallback(plus_minus)
             clutch = clutch_by_id.get(int(team["team_id"]))
             fallback_clutch = clutch_fallback(plus_minus)
+            fga = float(stats.get("FGA", 0))
+            ftr = round(float(stats.get("FTA", 0)) / fga * 100, 1) if fga else fallback_adv["ftr"]
             rows.append(
                 {
                     **team,
@@ -283,6 +290,8 @@ class LeagueAnalyticsService:
                     "efg_pct": round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"],
                     "ts_pct": round(float(adv["TS_PCT"]) * 100, 1) if adv else fallback_adv["ts_pct"],
                     "tov_pct": round(float(adv["TM_TOV_PCT"]) * 100, 1) if adv else fallback_adv["tov_pct"],
+                    "oreb_pct": round(float(adv["OREB_PCT"]) * 100, 1) if adv else fallback_adv["oreb_pct"],
+                    "ftr": ftr,
                     "clutch_record": f"{int(clutch['W'])}-{int(clutch['L'])}" if clutch else fallback_clutch["clutch_record"],
                     "clutch_net": round(float(clutch["PLUS_MINUS"]), 1) if clutch else fallback_clutch["clutch_net"],
                     "last10": simulated_last10(playoff_wins, playoff_losses),
@@ -304,7 +313,7 @@ class LeagueAnalyticsService:
         frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
         if frame.empty:
             return {}
-        for column in ["TEAM_ID", "OFF_RATING", "DEF_RATING", "PACE", "EFG_PCT", "TS_PCT", "TM_TOV_PCT"]:
+        for column in ["TEAM_ID", "OFF_RATING", "DEF_RATING", "PACE", "EFG_PCT", "TS_PCT", "TM_TOV_PCT", "OREB_PCT"]:
             if column in frame:
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
@@ -823,6 +832,8 @@ class LeagueAnalyticsService:
         ff_edge = four_factors_edge(
             float(home.get("efg_pct", 0)), float(away.get("efg_pct", 0)),
             float(home.get("tov_pct", 0)), float(away.get("tov_pct", 0)),
+            float(home.get("oreb_pct", 0)), float(away.get("oreb_pct", 0)),
+            float(home.get("ftr", 0)), float(away.get("ftr", 0)),
         )
 
         expected_home_margin = (
@@ -901,12 +912,12 @@ class LeagueAnalyticsService:
         winner_ff_edge = ff_edge if winner["abbr"] == home["abbr"] else -ff_edge
         if winner_ff_edge >= 0.4:
             summary_parts.append(
-                f"{winner['abbr']} also grades out better on our shooting-efficiency and ball-security blend "
-                f"(eFG%/turnovers), which adds a bit more to the number."
+                f"{winner['abbr']} also grades out better on our four-factors blend "
+                f"(eFG%/turnovers/off. rebounds/FT rate), which adds a bit more to the number."
             )
         elif winner_ff_edge <= -0.4:
             summary_parts.append(
-                f"{loser['abbr']} actually grades out better on that same shooting/turnover blend, "
+                f"{loser['abbr']} actually grades out better on that same four-factors blend, "
                 f"so the pick leans more on overall margin, rest, and matchup context than shot quality."
             )
 
@@ -979,8 +990,20 @@ class LeagueAnalyticsService:
                 "margin_edge": round(split_edge, 2),
             },
             "four_factors": {
-                "home": {"abbr": home["abbr"], "efg_pct": home.get("efg_pct"), "tov_pct": home.get("tov_pct")},
-                "away": {"abbr": away["abbr"], "efg_pct": away.get("efg_pct"), "tov_pct": away.get("tov_pct")},
+                "home": {
+                    "abbr": home["abbr"],
+                    "efg_pct": home.get("efg_pct"),
+                    "tov_pct": home.get("tov_pct"),
+                    "oreb_pct": home.get("oreb_pct"),
+                    "ftr": home.get("ftr"),
+                },
+                "away": {
+                    "abbr": away["abbr"],
+                    "efg_pct": away.get("efg_pct"),
+                    "tov_pct": away.get("tov_pct"),
+                    "oreb_pct": away.get("oreb_pct"),
+                    "ftr": away.get("ftr"),
+                },
                 "margin_edge": round(ff_edge, 2),
             },
             "calibration": {
@@ -1001,9 +1024,9 @@ class LeagueAnalyticsService:
                     "opponent": f"{loser_split_net:+.1f} net" if loser_split_net is not None else "N/A",
                 },
                 {
-                    "label": "Shooting/turnovers",
-                    "winner": f"{winner.get('efg_pct', 0):.1f}% eFG, {winner.get('tov_pct', 0):.1f}% TOV",
-                    "opponent": f"{loser.get('efg_pct', 0):.1f}% eFG, {loser.get('tov_pct', 0):.1f}% TOV",
+                    "label": "Four factors",
+                    "winner": f"{winner.get('efg_pct', 0):.1f}% eFG, {winner.get('tov_pct', 0):.1f}% TOV, {winner.get('oreb_pct', 0):.1f}% OREB, {winner.get('ftr', 0):.1f}% FTr",
+                    "opponent": f"{loser.get('efg_pct', 0):.1f}% eFG, {loser.get('tov_pct', 0):.1f}% TOV, {loser.get('oreb_pct', 0):.1f}% OREB, {loser.get('ftr', 0):.1f}% FTr",
                 },
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
             ],
@@ -1421,6 +1444,8 @@ def advanced_fallback(net_rating: float) -> dict[str, float]:
         "efg_pct": 53.0,
         "ts_pct": 56.5,
         "tov_pct": 13.0,
+        "oreb_pct": 28.0,
+        "ftr": 20.0,
     }
 
 
@@ -1466,14 +1491,27 @@ def home_road_split_edge(
     return max(-_HOME_ROAD_SPLIT_CAP, min(_HOME_ROAD_SPLIT_CAP, edge))
 
 
-def four_factors_edge(home_efg: float, away_efg: float, home_tov: float, away_tov: float) -> float:
-    """Points of home margin from eFG% and TOV% - two of Dean Oliver's Four Factors.
-    Higher eFG% (shoots more efficiently) and lower TOV% (protects the ball better)
-    both favor that side; missing/zeroed stats simply contribute nothing thanks to
-    the symmetric subtraction, matching the fallback behavior of the other edges."""
+def four_factors_edge(
+    home_efg: float,
+    away_efg: float,
+    home_tov: float,
+    away_tov: float,
+    home_oreb: float = 0.0,
+    away_oreb: float = 0.0,
+    home_ftr: float = 0.0,
+    away_ftr: float = 0.0,
+) -> float:
+    """Points of home margin from Dean Oliver's full Four Factors: eFG%, TOV%,
+    OREB%, and FT rate. Higher eFG% (shoots more efficiently), lower TOV% (protects
+    the ball better), higher OREB% (more extra shots), and higher FT rate (more free
+    points) all favor that side; missing/zeroed stats simply contribute nothing
+    thanks to the symmetric subtraction, matching the other edges' fallback behavior.
+    OREB%/FT-rate default to 0 so existing two-factor call sites keep working."""
     efg_edge = (home_efg - away_efg) * _FOUR_FACTORS_EFG_WEIGHT
     tov_edge = (away_tov - home_tov) * _FOUR_FACTORS_TOV_WEIGHT
-    edge = efg_edge + tov_edge
+    oreb_edge = (home_oreb - away_oreb) * _FOUR_FACTORS_OREB_WEIGHT
+    ftr_edge = (home_ftr - away_ftr) * _FOUR_FACTORS_FTR_WEIGHT
+    edge = efg_edge + tov_edge + oreb_edge + ftr_edge
     return max(-_FOUR_FACTORS_CAP, min(_FOUR_FACTORS_CAP, edge))
 
 

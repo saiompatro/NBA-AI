@@ -36,7 +36,7 @@ def main() -> None:
 
     for stats in (even, strong, weak):
         assert stats["pace"] == 99.5, "pace fallback is a fixed league-average stand-in"
-        assert set(stats) == {"off_rtg", "def_rtg", "pace", "efg_pct", "ts_pct", "tov_pct"}
+        assert set(stats) == {"off_rtg", "def_rtg", "pace", "efg_pct", "ts_pct", "tov_pct", "oreb_pct", "ftr"}
 
     print("OK: advanced-stats fallback is internally consistent with net rating")
 

@@ -1,4 +1,4 @@
-"""Self-check for the four-factors (eFG% / TOV%) pregame adjustment.
+"""Self-check for the four-factors (eFG% / TOV% / OREB% / FT rate) pregame adjustment.
 
 Run directly: python scripts/test_four_factors.py
 """
@@ -47,7 +47,34 @@ def main() -> None:
     edge = four_factors_edge(home_efg=30.0, away_efg=70.0, home_tov=25.0, away_tov=5.0)
     assert edge == -_FOUR_FACTORS_CAP, "edge must clamp at the negative cap"
 
-    print("OK: four-factors edge is zero on identical profiles, signed correctly, additive, and capped")
+    # OREB% and FT rate default to 0 - two-factor call sites are unaffected.
+    two_factor = four_factors_edge(home_efg=55.0, away_efg=53.0, home_tov=12.0, away_tov=14.0)
+    explicit_zero = four_factors_edge(
+        home_efg=55.0, away_efg=53.0, home_tov=12.0, away_tov=14.0,
+        home_oreb=0.0, away_oreb=0.0, home_ftr=0.0, away_ftr=0.0,
+    )
+    assert two_factor == explicit_zero
+
+    # A rebounding edge (more extra shots) favors the home side.
+    edge = four_factors_edge(53.0, 53.0, 13.0, 13.0, home_oreb=32.0, away_oreb=24.0)
+    assert edge > 0, "a home offensive-rebounding advantage should help the home side"
+
+    # A free-throw-rate edge (more trips to the line) favors the home side.
+    edge = four_factors_edge(53.0, 53.0, 13.0, 13.0, home_ftr=26.0, away_ftr=18.0)
+    assert edge > 0, "a home FT-rate advantage should help the home side"
+
+    # All four factors combine additively before the cap is applied (kept well under
+    # the cap so clamping doesn't mask the additivity check).
+    combined = four_factors_edge(55.0, 53.0, 12.0, 14.0, 30.0, 28.0, 22.0, 18.0)
+    parts = (
+        four_factors_edge(55.0, 53.0, 13.0, 13.0)
+        + four_factors_edge(53.0, 53.0, 12.0, 14.0)
+        + four_factors_edge(53.0, 53.0, 13.0, 13.0, home_oreb=30.0, away_oreb=28.0)
+        + four_factors_edge(53.0, 53.0, 13.0, 13.0, home_ftr=22.0, away_ftr=18.0)
+    )
+    assert abs(combined - parts) < 1e-9
+
+    print("OK: four-factors edge covers eFG%/TOV%/OREB%/FT-rate, is zero on identical profiles, signed correctly, additive, and capped")
 
 
 if __name__ == "__main__":
