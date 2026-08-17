@@ -65,6 +65,11 @@ def create_app() -> Flask:
         season = current_season()
         return jsonify({"season": season, "games": analytics.player_game_log(player_id, season)})
 
+    @app.get("/api/players/<int:player_id>/shot-chart")
+    def player_shot_chart(player_id: int):
+        season = current_season()
+        return jsonify(analytics.player_shot_chart(player_id, season))
+
     @app.get("/api/model-performance")
     def model_performance():
         return jsonify(analytics.model_performance())

@@ -519,6 +519,79 @@ class LeagueAnalyticsService:
             "PlayerGameLog",
         )
 
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Real shot locations (LOC_X/LOC_Y) plus per-zone FG% vs league average, for
+        the player-profile shot chart - the one visual every reference NBA product
+        (NBA.com/stats, StatMuse, Cleaning the Glass) has and this dashboard was
+        missing despite already shipping a shot-quality model. Playoffs first with
+        a regular-season fallback, matching `player_game_log`."""
+        shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Playoffs")
+        season_type = "Playoffs"
+        if shots_frame.empty:
+            shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Regular Season")
+            season_type = "Regular Season"
+        summary = summarize_shot_chart(shots_frame, league_frame)
+        return {"season": season, "season_type": season_type, "player_id": player_id, **summary}
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """One request to `shotchartdetail` yields both the shot-by-shot detail and
+        the league-average-by-zone result sets, so fetch once and split them
+        rather than hitting the endpoint twice for the same params."""
+        params = {
+            "PlayerID": player_id,
+            "TeamID": 0,
+            "Season": season,
+            "SeasonType": season_type,
+            "ContextMeasure": "FGA",
+            "LeagueID": "00",
+            "Period": 0,
+            "Month": 0,
+            "LastNGames": 0,
+            "OpponentTeamID": 0,
+            "RangeType": 0,
+            "StartPeriod": 1,
+            "EndPeriod": 10,
+            "StartRange": 0,
+            "EndRange": 28800,
+            "Outcome": "",
+            "Location": "",
+            "SeasonSegment": "",
+            "DateFrom": "",
+            "DateTo": "",
+            "VsConference": "",
+            "VsDivision": "",
+            "Position": "",
+            "PlayerPosition": "",
+            "RookieYear": "",
+            "GameSegment": "",
+            "ClutchTime": "",
+            "AheadBehind": "",
+            "PointDiff": "",
+            "GameID": "",
+            "ContextFilter": "",
+        }
+        try:
+            response = requests.get(
+                "https://stats.nba.com/stats/shotchartdetail",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_sets = response.json().get("resultSets", [])
+        except Exception:
+            return pd.DataFrame(), pd.DataFrame()
+
+        def _frame(name: str) -> pd.DataFrame:
+            selected = next((item for item in result_sets if item.get("name") == name), None)
+            if not selected:
+                return pd.DataFrame()
+            return pd.DataFrame(selected.get("rowSet", []), columns=selected.get("headers", []))
+
+        return _frame("Shot_Chart_Detail"), _frame("LeagueAverages")
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()
@@ -1345,6 +1418,73 @@ def common_dash_params(season: str, season_type: str, per_mode: str) -> dict[str
         "PlusMinus": "N",
         "Rank": "N",
     }
+
+
+def summarize_shot_chart(shots_df: pd.DataFrame, league_df: pd.DataFrame) -> dict[str, Any]:
+    """Pure aggregation over raw `shotchartdetail` result sets: per-shot locations
+    for the court plot, plus per-zone FG% versus the league-average zone rates.
+    Kept free of network/session state so it's directly unit-testable."""
+    if shots_df is None or shots_df.empty:
+        return {"total_fga": 0, "total_fgm": 0, "fg_pct": 0.0, "shots": [], "zones": []}
+
+    df = shots_df.copy()
+    for column in ("LOC_X", "LOC_Y", "SHOT_MADE_FLAG", "SHOT_ATTEMPTED_FLAG", "SHOT_DISTANCE"):
+        if column in df:
+            df[column] = pd.to_numeric(df[column], errors="coerce").fillna(0)
+    if "LOC_Y" in df:
+        df = df[df["LOC_Y"] <= 400]  # drop backcourt heaves/logo shots as chart noise
+    df = df.tail(600)  # shotchartdetail rows come back oldest-first; keep the most recent
+
+    total_fga = int(df["SHOT_ATTEMPTED_FLAG"].sum()) if "SHOT_ATTEMPTED_FLAG" in df else len(df)
+    total_fgm = int(df["SHOT_MADE_FLAG"].sum()) if "SHOT_MADE_FLAG" in df else 0
+    fg_pct = round(total_fgm / total_fga * 100, 1) if total_fga else 0.0
+
+    shots = [
+        {
+            "x": int(row.get("LOC_X", 0)),
+            "y": int(row.get("LOC_Y", 0)),
+            "made": bool(row.get("SHOT_MADE_FLAG", 0)),
+            "value": 3 if "3PT" in str(row.get("SHOT_TYPE", "")) else 2,
+            "distance": round(float(row.get("SHOT_DISTANCE", 0)), 1),
+        }
+        for row in df.to_dict("records")
+    ]
+
+    zones: list[dict[str, Any]] = []
+    if "SHOT_ZONE_BASIC" in df:
+        league_lookup: dict[str, dict[str, float]] = {}
+        if league_df is not None and not league_df.empty and "SHOT_ZONE_BASIC" in league_df:
+            league = league_df.copy()
+            for column in ("FGA", "FGM"):
+                if column in league:
+                    league[column] = pd.to_numeric(league[column], errors="coerce").fillna(0)
+            for zone, group in league.groupby("SHOT_ZONE_BASIC"):
+                league_lookup[str(zone)] = {
+                    "fga": float(group.get("FGA", pd.Series(dtype=float)).sum()),
+                    "fgm": float(group.get("FGM", pd.Series(dtype=float)).sum()),
+                }
+
+        for zone, group in df.groupby("SHOT_ZONE_BASIC"):
+            fga = int(group["SHOT_ATTEMPTED_FLAG"].sum()) if "SHOT_ATTEMPTED_FLAG" in group else len(group)
+            fgm = int(group["SHOT_MADE_FLAG"].sum()) if "SHOT_MADE_FLAG" in group else 0
+            zone_pct = round(fgm / fga * 100, 1) if fga else 0.0
+            league_zone = league_lookup.get(str(zone), {"fga": 0.0, "fgm": 0.0})
+            league_pct = (
+                round(league_zone["fgm"] / league_zone["fga"] * 100, 1) if league_zone["fga"] else 0.0
+            )
+            zones.append(
+                {
+                    "zone": str(zone),
+                    "fga": fga,
+                    "fgm": fgm,
+                    "fg_pct": zone_pct,
+                    "league_fg_pct": league_pct,
+                    "diff": round(zone_pct - league_pct, 1),
+                }
+            )
+        zones.sort(key=lambda item: item["fga"], reverse=True)
+
+    return {"total_fga": total_fga, "total_fgm": total_fgm, "fg_pct": fg_pct, "shots": shots, "zones": zones}
 
 
 def sentiment_score(text: str) -> float:

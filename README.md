@@ -27,6 +27,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
 - **Playoff bracket** — series scores grouped by conference and round (First Round / Conf. Semifinals / Conf. Finals / NBA Finals), sourced from the same live `scoreboardv3` series data the standings already computed but the UI never surfaced
 - **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder), plus the shot-quality model's R²/MAE on a synthetic holdout (labeled as such — there's no real-shot ground truth to backtest against)
+- **Player shot chart** — real shot locations plotted on a court diagram (make/miss, filterable), with per-zone FG% versus the league-average rate for that zone, sourced from `shotchartdetail` (playoffs first, regular-season fallback)
 
 ## Tech Stack
 
@@ -106,6 +107,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/table`                                                  | Live playoff series scores by round (feeds the bracket page) |
 | GET    | `/api/players`                                                | Playoff player stats                          |
 | GET    | `/api/players/<id>/game-log`                                  | Real last-10 boxscore log for a player (playoffs, falling back to regular season) |
+| GET    | `/api/players/<id>/shot-chart`                                | Shot locations + per-zone FG% vs. league average for a player |
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
@@ -152,6 +154,7 @@ This project uses the following **public, unauthenticated** data sources. No API
   - `nba_api.stats.endpoints.leaguedashplayerstats` — season player stats
   - `nba_api.stats.endpoints.leaguedashteamstats` — season team stats
   - `nba_api.stats.endpoints.playoffpicture` — playoff bracket picture
+  - `nba_api.stats.endpoints.shotchartdetail` — shot locations and league-average zone rates
 - **Data owner:** NBA Stats (`stats.nba.com`) — data is property of the NBA. Use is subject to [NBA Terms of Use](https://www.nba.com/tos).
 
 ### ESPN Public APIs

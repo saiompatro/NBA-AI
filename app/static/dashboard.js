@@ -19,6 +19,8 @@ const state = {
   modelPerformanceLoading: false,
   shotQuality: null,
   shotQualityLoading: false,
+  shotChart: {},
+  shotChartFilter: {},
 };
 
 const els = {
@@ -731,6 +733,95 @@ function loadGameLog(playerId) {
     });
 }
 
+function courtSvg(shots) {
+  const made = shots.filter((shot) => shot.made);
+  const missed = shots.filter((shot) => !shot.made);
+  const dot = (shot) => `<circle class="shot-make" cx="${shot.x}" cy="${shot.y}" r="4"></circle>`;
+  const cross = (shot) => `<path class="shot-miss" d="M ${shot.x - 4} ${shot.y - 4} L ${shot.x + 4} ${shot.y + 4} M ${shot.x - 4} ${shot.y + 4} L ${shot.x + 4} ${shot.y - 4}"></path>`;
+  return `
+    <svg class="shot-court" viewBox="-250 -50 500 470" xmlns="http://www.w3.org/2000/svg">
+      <g class="court-lines" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="-80" y="-47.5" width="160" height="190" />
+        <circle cx="0" cy="142.5" r="60" />
+        <path d="M -40 0 A 40 40 0 0 1 40 0" />
+        <line x1="-220" y1="-47.5" x2="-220" y2="92.5" />
+        <line x1="220" y1="-47.5" x2="220" y2="92.5" />
+        <path d="M -220 92.5 A 237.5 237.5 0 0 1 220 92.5" />
+        <line x1="-30" y1="-7.5" x2="30" y2="-7.5" />
+        <circle cx="0" cy="0" r="7.5" />
+      </g>
+      <g class="shots">${missed.map(cross).join("")}${made.map(dot).join("")}</g>
+    </svg>
+  `;
+}
+
+function shotChartPanel(playerId) {
+  return `
+    <article class="profile-panel shot-chart-wrap">
+      <div class="panel-heading"><h2>Shot Chart</h2></div>
+      <div id="shot-chart-${playerId}">${renderShotChartContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderShotChartContent(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const shots = entry.shots || [];
+  if (!shots.length) return `<p class="footer-note">No charted shots found for this player.</p>`;
+  const madeCount = shots.filter((shot) => shot.made).length;
+  const missedCount = shots.length - madeCount;
+  const filter = state.shotChartFilter[playerId] || "all";
+  const filtered = filter === "made" ? shots.filter((shot) => shot.made) : filter === "missed" ? shots.filter((shot) => !shot.made) : shots;
+  const zones = entry.zones || [];
+  return `
+    <div class="segmented shot-filter-segmented">
+      <button class="segment ${filter === "all" ? "active" : ""}" type="button" data-shot-filter="${playerId}:all">All (${shots.length})</button>
+      <button class="segment ${filter === "made" ? "active" : ""}" type="button" data-shot-filter="${playerId}:made">Makes (${madeCount})</button>
+      <button class="segment ${filter === "missed" ? "active" : ""}" type="button" data-shot-filter="${playerId}:missed">Misses (${missedCount})</button>
+    </div>
+    <p class="footer-note">${html(entry.season_type || "")} - ${entry.total_fgm}/${entry.total_fga} FG (${entry.fg_pct}%) on charted attempts</p>
+    ${courtSvg(filtered)}
+    <div class="shot-chart-legend">
+      <span><span class="legend-dot shot-make-dot"></span>Make</span>
+      <span><span class="legend-dot shot-miss-dot"></span>Miss</span>
+    </div>
+    ${zones.length ? `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Zone</th><th>FGA</th><th>FGM</th><th>FG%</th><th>Lg FG%</th><th>Diff</th></tr></thead>
+        <tbody>${zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.fga}</td>
+            <td>${zone.fgm}</td>
+            <td>${zone.fg_pct}%</td>
+            <td>${zone.league_fg_pct}%</td>
+            <td class="${zone.diff >= 0 ? "positive" : "concern"}">${zone.diff > 0 ? "+" : ""}${zone.diff}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>` : ""}
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = { loading: false, error: false, ...data };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    });
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -842,10 +933,12 @@ function renderPlayerDetail(slug) {
       </aside>
     </section>
     ${gameLogPanel(player.id)}
+    ${shotChartPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
   if (!state.gameLog[player.id]) loadGameLog(player.id);
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
 }
 
 function renderAlertsPage() {
@@ -1373,6 +1466,15 @@ document.addEventListener("click", (event) => {
       terms,
       refresh: true,
     });
+    return;
+  }
+
+  const shotFilterButton = event.target.closest("[data-shot-filter]");
+  if (shotFilterButton) {
+    const [playerId, filter] = shotFilterButton.dataset.shotFilter.split(":");
+    state.shotChartFilter[playerId] = filter;
+    const target = document.getElementById(`shot-chart-${playerId}`);
+    if (target) target.innerHTML = renderShotChartContent(playerId);
   }
 });
 

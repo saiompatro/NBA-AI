@@ -1343,6 +1343,58 @@ td {
   border-radius: 50%;
 }
 
+.shot-filter-segmented {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.shot-court {
+  display: block;
+  width: 100%;
+  max-width: 460px;
+  margin: 0 auto;
+  color: var(--line-strong);
+}
+
+.shot-make {
+  fill: var(--green);
+}
+
+.shot-miss {
+  stroke: var(--red);
+  stroke-width: 2;
+  opacity: 0.6;
+}
+
+.shot-chart-legend {
+  display: flex;
+  gap: 20px;
+  justify-content: center;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+.shot-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shot-make-dot {
+  background: var(--green);
+}
+
+.shot-miss-dot {
+  background: transparent;
+  border: 2px solid var(--red);
+  opacity: 0.6;
+}
+
+.shot-chart-wrap .table-wrap {
+  margin-top: 16px;
+}
+
 .page-heading {
   display: flex;
   justify-content: space-between;
