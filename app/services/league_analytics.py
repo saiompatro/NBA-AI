@@ -92,6 +92,14 @@ _FOUR_FACTORS_CAP = 4.0          # hard cap on total margin swing from all four 
 _CLUTCH_TIME = "Last 5 Minutes"
 _CLUTCH_POINT_DIFF = "5"
 
+# Player shot chart. NBA.com Stats and Cleaning the Glass both lead player pages with
+# a shot-location chart, but ours had zero shot-location visualization even though the
+# shot-quality model already consumes shot distance/angle per attempt.
+_SHOT_CHART_MAX = 1200  # cap shots returned per response
+_COURT_X_LIMIT = 250    # +/-25ft in 1/10-ft units (court is 50ft wide)
+_COURT_Y_MIN = -52.5    # baseline (hoop center is 5.25ft off it)
+_COURT_Y_MAX = 417.5    # halfcourt line (47ft from baseline)
+
 # Per-player advanced efficiency. Teams already got off/def rating, pace, and four
 # factors (see `_advanced_team_stats`) but players were still raw per-game box totals -
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
@@ -511,6 +519,42 @@ class LeagueAnalyticsService:
             )
         return games
 
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Season shot chart (locations, made/miss, zone) for a player, playoffs first
+        with a regular-season fallback - same reasoning as `player_game_log` above."""
+        season_type = "Playoffs"
+        frame = self._shot_chart_frame(player_id, season, season_type)
+        if frame.empty:
+            season_type = "Regular Season"
+            frame = self._shot_chart_frame(player_id, season, season_type)
+        if frame.empty:
+            season_type = ""
+
+        rows = shot_chart_rows(frame.to_dict("records")) if not frame.empty else []
+        zones = shot_chart_zones(rows)
+
+        attempts = len(rows)
+        made = sum(1 for r in rows if r["made"])
+        fg3_rows = [r for r in rows if r["value"] == 3]
+        fg3_attempts = len(fg3_rows)
+        fg3_made = sum(1 for r in fg3_rows if r["made"])
+        totals = {
+            "made": made,
+            "attempts": attempts,
+            "fg_pct": round(made / attempts * 100, 1) if attempts else 0.0,
+            "fg3_made": fg3_made,
+            "fg3_attempts": fg3_attempts,
+            "fg3_pct": round(fg3_made / fg3_attempts * 100, 1) if fg3_attempts else 0.0,
+        }
+
+        return {
+            "season": season,
+            "season_type": season_type,
+            "shots": rows,
+            "zones": zones,
+            "totals": totals,
+        }
+
     @lru_cache(maxsize=64)
     def _player_game_log_frame(self, player_id: int, season: str, season_type: str) -> pd.DataFrame:
         return self._stats_frame(
@@ -518,6 +562,19 @@ class LeagueAnalyticsService:
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
         )
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frame(self, player_id: int, season: str, season_type: str) -> pd.DataFrame:
+        params = {
+            "PlayerID": player_id, "TeamID": 0, "Season": season, "SeasonType": season_type,
+            "LeagueID": "00", "ContextMeasure": "FGA", "ContextFilter": "", "AheadBehind": "",
+            "ClutchTime": "", "DateFrom": "", "DateTo": "", "GameID": "", "GameSegment": "",
+            "LastNGames": 0, "Location": "", "Month": 0, "OpponentTeamID": 0, "Outcome": "",
+            "Period": 0, "PlayerPosition": "", "PointDiff": "", "Position": "", "RangeType": 0,
+            "RookieYear": "", "SeasonSegment": "", "StartPeriod": 1, "EndPeriod": 10,
+            "StartRange": 0, "EndRange": 28800, "VsConference": "", "VsDivision": "",
+        }
+        return self._stats_frame("shotchartdetail", params, "Shot_Chart_Detail")
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
@@ -1464,6 +1521,58 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+def shot_chart_rows(records: list[dict]) -> list[dict]:
+    """Normalize raw Shot_Chart_Detail rows into compact {x,y,made,zone,dist,period,value}
+    dicts, clamped to court bounds."""
+    rows: list[dict] = []
+    for record in records:
+        try:
+            x = float(record.get("LOC_X"))
+            y = float(record.get("LOC_Y"))
+            shot_distance = int(record.get("SHOT_DISTANCE"))
+            period = int(record.get("PERIOD"))
+            shot_made_flag = int(record.get("SHOT_MADE_FLAG"))
+        except (ValueError, TypeError):
+            continue
+        x = max(min(x, _COURT_X_LIMIT), -_COURT_X_LIMIT)
+        y = max(min(y, _COURT_Y_MAX), _COURT_Y_MIN)
+        made = bool(shot_made_flag == 1)
+        zone = record.get("SHOT_ZONE_BASIC", "Unknown")
+        value = 3 if "3PT" in str(record.get("SHOT_TYPE", "")) else 2
+        rows.append(
+            {
+                "x": round(x, 1),
+                "y": round(y, 1),
+                "made": made,
+                "zone": zone,
+                "dist": shot_distance,
+                "period": period,
+                "value": value,
+            }
+        )
+    return rows[-_SHOT_CHART_MAX:]
+
+
+def shot_chart_zones(rows: list[dict]) -> list[dict]:
+    """Aggregate normalized shot rows into per-zone FG%/points-per-shot summaries,
+    sorted by attempts desc."""
+    if not rows:
+        return []
+    groups: dict[str, list[dict]] = {}
+    for row in rows:
+        groups.setdefault(row["zone"], []).append(row)
+    zones = []
+    for zone, group in groups.items():
+        attempts = len(group)
+        made = sum(1 for r in group if r["made"])
+        points = sum(r["value"] for r in group if r["made"])
+        fg_pct = round(made / attempts * 100, 1) if attempts else 0.0
+        pps = round(points / attempts, 2) if attempts else 0.0
+        zones.append({"zone": zone, "made": made, "attempts": attempts, "fg_pct": fg_pct, "pps": pps})
+    zones.sort(key=lambda z: z["attempts"], reverse=True)
+    return zones
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:
