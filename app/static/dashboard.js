@@ -11,6 +11,7 @@ const state = {
   news: {},
   compare: { a: null, b: null },
   gameLog: {},
+  shotChart: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -731,6 +732,93 @@ function loadGameLog(playerId) {
     });
 }
 
+// Half-court diagram in the standard NBA Stats shot-coordinate space: LOC_X in
+// [-250, 250] (tenths of a foot, hoop-centered), LOC_Y in [-47.5, 422.5] (baseline
+// to half court). svgX = x + 250, svgY = 422.5 - y so the baseline sits at the
+// bottom of a 500x470 viewBox.
+function courtMarkup() {
+  return `
+    <rect x="0" y="0" width="500" height="470" class="court-boundary" />
+    <circle cx="250" cy="422.5" r="7.5" class="court-line" />
+    <line x1="220" y1="430" x2="280" y2="430" class="court-line" />
+    <rect x="170" y="280" width="160" height="190" class="court-line" />
+    <rect x="190" y="280" width="120" height="190" class="court-line" />
+    <circle cx="250" cy="280" r="60" class="court-line" />
+    <path d="M210,422.5 A40,40 0 0 0 290,422.5" class="court-line" />
+    <path d="M30,470 L30,333.02 A237.5,237.5 0 0 0 470,333.02 L470,470" class="court-line" />
+    <circle cx="250" cy="0" r="60" class="court-line" />
+  `;
+}
+
+function shotMarker(shot) {
+  const x = Math.min(500, Math.max(0, shot.x + 250));
+  const y = Math.min(470, Math.max(0, 422.5 - shot.y));
+  if (shot.made) {
+    return `<circle cx="${x}" cy="${y}" r="3.4" class="shot-made" />`;
+  }
+  return `
+    <line x1="${x - 3.2}" y1="${y - 3.2}" x2="${x + 3.2}" y2="${y + 3.2}" class="shot-missed" />
+    <line x1="${x - 3.2}" y1="${y + 3.2}" x2="${x + 3.2}" y2="${y - 3.2}" class="shot-missed" />
+  `;
+}
+
+function shotChartPanel(playerId) {
+  return `
+    <article class="profile-panel shot-chart-panel">
+      <div class="panel-heading"><h2>Shot Chart</h2><span>Real playoff (or regular-season fallback) FGA locations</span></div>
+      <div id="shot-chart-${playerId}">${renderShotChartContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderShotChartContent(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const shots = entry.shots || [];
+  const zones = entry.zones || [];
+  if (!shots.length) return `<p class="footer-note">No charted shot-location data found for this player.</p>`;
+  return `
+    <svg class="court-svg" viewBox="0 0 500 470" role="img" aria-label="Shot chart">
+      ${courtMarkup()}
+      ${shots.map(shotMarker).join("")}
+    </svg>
+    <div class="shot-chart-legend">
+      <span><i class="legend-swatch made"></i>Made</span>
+      <span><i class="legend-swatch missed"></i>Missed</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Zone</th><th>Made</th><th>Attempts</th><th>FG%</th></tr></thead>
+        <tbody>${zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.made}</td>
+            <td>${zone.attempts}</td>
+            <td>${zone.pct}%</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = { loading: false, error: false, shots: data.shots || [], zones: data.zones || [] };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    });
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -842,10 +930,12 @@ function renderPlayerDetail(slug) {
       </aside>
     </section>
     ${gameLogPanel(player.id)}
+    ${shotChartPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
   if (!state.gameLog[player.id]) loadGameLog(player.id);
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
 }
 
 function renderAlertsPage() {

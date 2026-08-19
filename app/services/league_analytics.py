@@ -97,6 +97,12 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Shot chart. Cap the number of individual shot markers sent to the client - a
+# 82-game high-volume shooter can have 1000+ field-goal attempts, far more dots
+# than a half-court plot can usefully render, and `tail()` keeps the most recent
+# (most relevant, in-season) attempts.
+_SHOT_CHART_MAX_SHOTS = 400
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -518,6 +524,75 @@ class LeagueAnalyticsService:
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
         )
+
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Real shot locations (make/miss, court x/y, zone) for a player, plus a
+        per-zone volume/efficiency breakdown. NBA.com Stats, Basketball-Reference,
+        and Cleaning the Glass all lead a player's shooting profile with a shot
+        chart - this app modeled shot *quality* for live games but never showed
+        where a player actually shoots from or how often those shots go in."""
+        frame = self._shot_chart_frame(player_id, season, "Playoffs")
+        if frame.empty:
+            frame = self._shot_chart_frame(player_id, season, "Regular Season")
+        if frame.empty:
+            return {"shots": [], "zones": []}
+
+        for column in ["LOC_X", "LOC_Y", "SHOT_DISTANCE", "SHOT_MADE_FLAG"]:
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+
+        shots = [
+            {
+                "x": float(row.get("LOC_X", 0)),
+                "y": float(row.get("LOC_Y", 0)),
+                "made": bool(row.get("SHOT_MADE_FLAG", 0)),
+                "distance": float(row.get("SHOT_DISTANCE", 0)),
+                "zone": str(row.get("SHOT_ZONE_BASIC", "") or "Unknown"),
+                "shot_type": str(row.get("ACTION_TYPE", "")),
+            }
+            # NBA Stats returns a full season of shots for high-volume players -
+            # cap the payload since the court plot doesn't need every last one.
+            for row in frame.tail(_SHOT_CHART_MAX_SHOTS).to_dict("records")
+        ]
+
+        return {"shots": shots, "zones": shot_zone_breakdown(shots)}
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frame(self, player_id: int, season: str, season_type: str) -> pd.DataFrame:
+        params = {
+            "PlayerID": player_id,
+            "TeamID": 0,
+            "GameID": "",
+            "ContextMeasure": "FGA",
+            "SeasonType": season_type,
+            "Season": season,
+            "LeagueID": "00",
+            "LastNGames": 0,
+            "Month": 0,
+            "OpponentTeamID": 0,
+            "Period": 0,
+            "AheadBehind": "",
+            "ClutchTime": "",
+            "ContextFilter": "",
+            "DateFrom": "",
+            "DateTo": "",
+            "EndPeriod": "",
+            "EndRange": "",
+            "GameSegment": "",
+            "Location": "",
+            "Outcome": "",
+            "PlayerPosition": "",
+            "PointDiff": "",
+            "Position": "",
+            "RangeType": "",
+            "RookieYear": "",
+            "SeasonSegment": "",
+            "StartPeriod": "",
+            "StartRange": "",
+            "VsConference": "",
+            "VsDivision": "",
+        }
+        return self._stats_frame("shotchartdetail", params, "Shot_Chart_Detail")
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
@@ -1430,6 +1505,28 @@ def seed_points(seed: int) -> float:
 
 def seed_net_rating(seed: int) -> float:
     return round(10.0 - seed * 2.1, 1)
+
+
+def shot_zone_breakdown(shots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Aggregate charted shots into a per-zone made/attempts/FG% table, sorted by
+    volume (most-attempted zone first) - the same cut NBA.com Stats and
+    Basketball-Reference show alongside a player's shot chart."""
+    zone_counts: dict[str, dict[str, int]] = {}
+    for shot in shots:
+        bucket = zone_counts.setdefault(shot["zone"], {"made": 0, "attempts": 0})
+        bucket["attempts"] += 1
+        bucket["made"] += 1 if shot["made"] else 0
+    zones = [
+        {
+            "zone": zone,
+            "made": counts["made"],
+            "attempts": counts["attempts"],
+            "pct": round(counts["made"] / counts["attempts"] * 100, 1) if counts["attempts"] else 0,
+        }
+        for zone, counts in zone_counts.items()
+    ]
+    zones.sort(key=lambda row: row["attempts"], reverse=True)
+    return zones
 
 
 def advanced_fallback(net_rating: float) -> dict[str, float]:

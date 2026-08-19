@@ -1280,6 +1280,68 @@ td {
   height: 72px;
 }
 
+.court-svg {
+  width: 100%;
+  max-width: 460px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+}
+
+.court-boundary {
+  fill: var(--surface-2);
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.shot-made {
+  fill: var(--green);
+  opacity: 0.85;
+}
+
+.shot-missed {
+  stroke: var(--red);
+  stroke-width: 1.6;
+  opacity: 0.75;
+}
+
+.shot-chart-legend {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  margin: 12px 0 4px;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.shot-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.legend-swatch.made {
+  background: var(--green);
+}
+
+.legend-swatch.missed {
+  background: var(--red);
+}
+
 .sentiment-layout {
   display: grid;
   grid-template-columns: 190px 1fr;
