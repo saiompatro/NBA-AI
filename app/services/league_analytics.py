@@ -519,6 +519,97 @@ class LeagueAnalyticsService:
             "PlayerGameLog",
         )
 
+    def player_shot_chart(self, player_id: int, season: str | None = None) -> dict[str, Any]:
+        """Real shot locations + zone FG% vs league average (NBA Stats shotchartdetail),
+        playoffs first with a regular-season fallback - same approach as player_game_log."""
+        season = season or current_season()
+        try:
+            shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Playoffs")
+            if shots_frame.empty:
+                shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Regular Season")
+            if shots_frame.empty:
+                return _empty_shot_chart()
+
+            shots = normalize_shot_rows(shots_frame)
+            if not shots:
+                return _empty_shot_chart()
+
+            zones = shot_zone_summary(shots, league_frame)
+            attempts = len(shots)
+            made = sum(1 for shot in shots if shot["made"])
+            totals = {
+                "fga": attempts,
+                "fgm": made,
+                "fg_pct": round((made / attempts) * 100, 1) if attempts else 0.0,
+            }
+            return {"available": True, "shots": shots, "zones": zones, "totals": totals}
+        except Exception:
+            return _empty_shot_chart()
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Shot-by-shot detail + the league-average zone rates that the same
+        shotchartdetail call returns, via the same NBA Stats HTTP mechanism
+        `_stats_frame` uses (can't reuse `_stats_frame` itself since this endpoint
+        returns two result sets we both need instead of just one)."""
+        params = {
+            "PlayerID": player_id,
+            "TeamID": 0,
+            "GameID": "",
+            "ContextMeasure": "FGA",
+            "Season": season,
+            "SeasonType": season_type,
+            "LeagueID": "00",
+            "Period": 0,
+            "RangeType": 0,
+            "StartRange": 0,
+            "EndRange": 28800,
+            "PlayerPosition": "",
+            "Outcome": "",
+            "Location": "",
+            "Month": 0,
+            "SeasonSegment": "",
+            "DateFrom": "",
+            "DateTo": "",
+            "OpponentTeamID": 0,
+            "VsConference": "",
+            "VsDivision": "",
+            "GameSegment": "",
+            "LastNGames": 0,
+            "AheadBehind": "",
+            "ContextFilter": "",
+            "RookieYear": "",
+            "PointDiff": "",
+            "StartPeriod": "",
+            "EndPeriod": "",
+            "ClutchTime": "",
+        }
+        try:
+            response = requests.get(
+                "https://stats.nba.com/stats/shotchartdetail",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_sets = response.json().get("resultSets", [])
+            shots_set = next((item for item in result_sets if item.get("name") == "Shot_Chart_Detail"), None)
+            league_set = next((item for item in result_sets if item.get("name") == "LeagueAverages"), None)
+            shots_frame = (
+                pd.DataFrame(shots_set.get("rowSet", []), columns=shots_set.get("headers", []))
+                if shots_set is not None
+                else pd.DataFrame()
+            )
+            league_frame = (
+                pd.DataFrame(league_set.get("rowSet", []), columns=league_set.get("headers", []))
+                if league_set is not None
+                else pd.DataFrame()
+            )
+            return shots_frame, league_frame
+        except Exception:
+            return pd.DataFrame(), pd.DataFrame()
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()
@@ -1464,6 +1555,92 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+def normalize_shot_rows(frame: pd.DataFrame, limit: int = 400) -> list[dict[str, Any]]:
+    """Convert a raw shotchartdetail rows DataFrame into plain per-shot dicts. The
+    NBA Stats endpoint returns shots oldest-first, so keeping the tail keeps the
+    most recent `limit` shots instead of the earliest ones in the season/series."""
+    if frame is None or frame.empty:
+        return []
+    trimmed = frame.tail(limit)
+    shots: list[dict[str, Any]] = []
+    for item in trimmed.to_dict("records"):
+        shots.append(
+            {
+                "x": int(item.get("LOC_X") or 0),
+                "y": int(item.get("LOC_Y") or 0),
+                "made": bool(int(item.get("SHOT_MADE_FLAG") or 0)),
+                "zone": str(item.get("SHOT_ZONE_BASIC") or "Unknown"),
+                "area": str(item.get("SHOT_ZONE_AREA") or ""),
+                "distance": int(item.get("SHOT_DISTANCE") or 0),
+                "period": int(item.get("PERIOD") or 0),
+            }
+        )
+    return shots
+
+
+def shot_zone_summary(shots: list[dict[str, Any]], league_frame: pd.DataFrame) -> list[dict[str, Any]]:
+    """Aggregate normalized shots by zone (FGA/FGM/FG%) against the league-average
+    FG% for that same zone, from the LeagueAverages result set the same
+    shotchartdetail call already returns."""
+    if not shots:
+        return []
+
+    zone_totals: dict[str, dict[str, int]] = {}
+    for shot in shots:
+        zone = shot.get("zone") or "Unknown"
+        totals = zone_totals.setdefault(zone, {"fga": 0, "fgm": 0})
+        totals["fga"] += 1
+        if shot.get("made"):
+            totals["fgm"] += 1
+
+    league_pct_by_zone = _league_zone_pct(league_frame)
+
+    rows = []
+    for zone, totals in zone_totals.items():
+        fga = totals["fga"]
+        fgm = totals["fgm"]
+        fg_pct = round((fgm / fga) * 100, 1) if fga else 0.0
+        league_pct = league_pct_by_zone.get(zone, 0.0)
+        rows.append(
+            {
+                "zone": zone,
+                "fga": fga,
+                "fgm": fgm,
+                "fg_pct": fg_pct,
+                "league_pct": league_pct,
+                "diff": round(fg_pct - league_pct, 1),
+            }
+        )
+    rows.sort(key=lambda row: row["fga"], reverse=True)
+    return rows
+
+
+def _league_zone_pct(league_frame: pd.DataFrame) -> dict[str, float]:
+    """Sum FGA/FGM per SHOT_ZONE_BASIC across the LeagueAverages result set (which
+    is broken out by zone+area+range) into one FG% per zone."""
+    if league_frame is None or league_frame.empty or "SHOT_ZONE_BASIC" not in league_frame:
+        return {}
+    working = league_frame.copy()
+    for column in ("FGA", "FGM"):
+        working[column] = pd.to_numeric(working[column], errors="coerce").fillna(0) if column in working else 0
+    grouped = working.groupby("SHOT_ZONE_BASIC")[["FGA", "FGM"]].sum()
+    result: dict[str, float] = {}
+    for zone, row in grouped.iterrows():
+        fga = float(row["FGA"])
+        fgm = float(row["FGM"])
+        result[str(zone)] = round((fgm / fga) * 100, 1) if fga else 0.0
+    return result
+
+
+def _empty_shot_chart() -> dict[str, Any]:
+    return {
+        "available": False,
+        "shots": [],
+        "zones": [],
+        "totals": {"fga": 0, "fgm": 0, "fg_pct": 0.0},
+    }
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:

@@ -1280,6 +1280,91 @@ td {
   height: 72px;
 }
 
+.shot-chart {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.court-svg {
+  width: 100%;
+  max-width: 320px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.court-line.hoop {
+  stroke: var(--orange);
+  stroke-width: 2;
+}
+
+.shot-dot.made {
+  fill: var(--green);
+  background: var(--green);
+  border-radius: 50%;
+}
+
+.shot-dot.missed line {
+  stroke: var(--red);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+}
+
+i.shot-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 4px;
+  position: relative;
+  vertical-align: middle;
+}
+
+i.shot-dot.missed::before,
+i.shot-dot.missed::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 12px;
+  height: 2px;
+  background: var(--red);
+}
+
+i.shot-dot.missed::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+i.shot-dot.missed::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
+}
+
+.shot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.shot-zone-table {
+  margin-top: 14px;
+}
+
 .sentiment-layout {
   display: grid;
   grid-template-columns: 190px 1fr;

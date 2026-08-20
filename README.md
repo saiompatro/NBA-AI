@@ -20,6 +20,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering)
 - **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
+- **Player shot chart** — real shot locations plotted on an inline SVG half-court (made vs missed), with a per-zone FG% vs. league-average breakdown, pulled live from `shotchartdetail` with a regular-season fallback
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
 - **Global search** — topbar search box for jumping straight to any player or team profile by name
@@ -106,6 +107,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/table`                                                  | Live playoff series scores by round (feeds the bracket page) |
 | GET    | `/api/players`                                                | Playoff player stats                          |
 | GET    | `/api/players/<id>/game-log`                                  | Real last-10 boxscore log for a player (playoffs, falling back to regular season) |
+| GET    | `/api/players/<id>/shot-chart`                                | Shot locations + zone FG% vs. league average for a player (playoffs, falling back to regular season) |
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |

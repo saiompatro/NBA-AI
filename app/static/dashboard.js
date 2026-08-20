@@ -11,6 +11,7 @@ const state = {
   news: {},
   compare: { a: null, b: null },
   gameLog: {},
+  shotChart: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -731,6 +732,99 @@ function loadGameLog(playerId) {
     });
 }
 
+function shotChartPanel(playerId) {
+  return `
+    <article class="profile-panel">
+      <div class="panel-heading"><h2>Shot Chart</h2></div>
+      <div id="shot-chart-${playerId}">${renderShotChartContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderShotChartContent(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const data = entry.data || { available: false, shots: [], zones: [], totals: {} };
+  if (!data.available || !data.shots.length) {
+    return `<p class="footer-note">No shot location data found for this player.</p>`;
+  }
+  return `
+    <div class="shot-chart">
+      ${courtSvg(data.shots)}
+      <div class="shot-legend">
+        <span><i class="shot-dot made"></i> Made</span>
+        <span><i class="shot-dot missed"></i> Missed</span>
+        <span class="footer-note">${data.totals.fgm}/${data.totals.fga} - ${data.totals.fg_pct}% FG</span>
+      </div>
+    </div>
+    <div class="table-wrap shot-zone-table">
+      <table>
+        <thead><tr><th>Zone</th><th>FGA</th><th>FGM</th><th>FG%</th><th>LG FG%</th><th>Diff</th></tr></thead>
+        <tbody>${data.zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.fga}</td>
+            <td>${zone.fgm}</td>
+            <td>${zone.fg_pct}</td>
+            <td>${zone.league_pct}</td>
+            <td class="${zone.diff >= 0 ? "positive" : "concern"}">${zone.diff > 0 ? "+" : ""}${zone.diff}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = { loading: false, error: false, data };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    });
+}
+
+// Half-court SVG in raw NBA shot-location units (LOC_X/LOC_Y, 1 unit = 0.1 ft,
+// hoop at the origin). The wrapping <g> flips + shifts that raw space so the
+// hoop lands near the bottom of the card and the rest of the floor reads
+// upward from it, without touching the shot coordinates themselves.
+function courtSvg(shots) {
+  const markers = shots.map((shot) => {
+    if (shot.made) {
+      return `<circle class="shot-dot made" cx="${shot.x}" cy="${shot.y}" r="3.4" />`;
+    }
+    return `<g class="shot-dot missed" transform="translate(${shot.x},${shot.y})">
+      <line x1="-3.4" y1="-3.4" x2="3.4" y2="3.4" />
+      <line x1="-3.4" y1="3.4" x2="3.4" y2="-3.4" />
+    </g>`;
+  }).join("");
+
+  return `
+    <svg class="court-svg" viewBox="-250 -52.5 500 470" role="img" aria-label="Shot chart court">
+      <g transform="translate(0,365) scale(1,-1)">
+        <rect class="court-line" x="-250" y="-47.5" width="500" height="460" fill="none" />
+        <rect class="court-line" x="-80" y="-47.5" width="160" height="190" fill="none" />
+        <circle class="court-line" cx="0" cy="142.5" r="60" fill="none" />
+        <line class="court-line" x1="-30" y1="-7.5" x2="30" y2="-7.5" />
+        <circle class="court-line hoop" cx="0" cy="0" r="7.5" fill="none" />
+        <path class="court-line" d="M -40 0 A 40 40 0 0 1 40 0" fill="none" />
+        <line class="court-line" x1="-220" y1="-47.5" x2="-220" y2="92.5" />
+        <line class="court-line" x1="220" y1="-47.5" x2="220" y2="92.5" />
+        <path class="court-line" d="M -220 92.5 A 237.5 237.5 0 0 1 220 92.5" fill="none" />
+        ${markers}
+      </g>
+    </svg>
+  `;
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -841,11 +935,13 @@ function renderPlayerDetail(slug) {
         <p style="color:var(--muted);font-weight:700;margin:16px 0 0">Sentiment: <span class="${player.sentiment.label.toLowerCase()}">${player.sentiment.label}</span></p>
       </aside>
     </section>
+    ${shotChartPanel(player.id)}
     ${gameLogPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
   if (!state.gameLog[player.id]) loadGameLog(player.id);
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
 }
 
 function renderAlertsPage() {
