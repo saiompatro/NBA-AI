@@ -11,6 +11,7 @@ const state = {
   news: {},
   compare: { a: null, b: null },
   gameLog: {},
+  shotChart: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -731,6 +732,106 @@ function loadGameLog(playerId) {
     });
 }
 
+function shotChartPanel(playerId) {
+  return `
+    <article class="profile-panel">
+      <div class="panel-heading"><h2>Shot Chart</h2><span>Season locations by zone</span></div>
+      <div id="shot-chart-${playerId}">${renderShotChartContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderShotChartContent(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const data = entry.data;
+  const shots = (data && data.shots) || [];
+  if (!shots.length) return `<p class="footer-note">No shot location data found for this player.</p>`;
+  const s = data.summary;
+  return `
+    <p class="shot-chart-summary">${s.makes}/${s.attempts} FG (${s.fg_pct}%) &middot; ${s.fg3m}/${s.fg3a} from three &middot; avg ${s.avg_distance} ft &middot; ${html(data.season_type)}</p>
+    <div class="shot-chart-layout">
+      ${courtSvg(shots)}
+      ${shotZoneTable(data.zones || [])}
+    </div>
+    <div class="shot-chart-legend">
+      <span class="make"><i></i>Make</span>
+      <span class="miss"><i></i>Miss</span>
+    </div>
+    ${data.truncated ? `<p class="footer-note">Showing the 600 most recent attempts; zone rates use every attempt.</p>` : ""}
+  `;
+}
+
+function courtSvg(shots) {
+  const COURT_W = 500;
+  const COURT_H = 470;
+  const svgX = (x) => Math.max(0, Math.min(COURT_W, x + 250));
+  const svgY = (y) => Math.max(0, Math.min(COURT_H, 417.5 - y));
+  const sorted = shots.slice().sort((a, b) => (a.made === b.made ? 0 : a.made ? 1 : -1));
+  const markers = sorted.map((shot) => {
+    const sx = svgX(shot.x).toFixed(1);
+    const sy = svgY(shot.y).toFixed(1);
+    const label = `${html(shot.action)} &middot; ${shot.distance} ft &middot; Q${shot.period}`;
+    if (shot.made) {
+      return `<circle cx="${sx}" cy="${sy}" r="5" class="shot-make"><title>${label}</title></circle>`;
+    }
+    const x0 = (Number(sx) - 4.5).toFixed(1);
+    const x1 = (Number(sx) + 4.5).toFixed(1);
+    const y0 = (Number(sy) - 4.5).toFixed(1);
+    const y1 = (Number(sy) + 4.5).toFixed(1);
+    return `<path d="M ${x0} ${y0} L ${x1} ${y1} M ${x0} ${y1} L ${x1} ${y0}" class="shot-miss"><title>${label}</title></path>`;
+  }).join("");
+  return `
+    <svg class="court-svg" viewBox="0 0 ${COURT_W} ${COURT_H}" role="img" aria-label="Shot chart">
+      <rect x="0" y="0" width="500" height="470" class="court-line" />
+      <rect x="170" y="280" width="160" height="190" class="court-paint" />
+      <circle cx="250" cy="280" r="60" class="court-line" />
+      <path d="M 210 417.5 A 40 40 0 0 1 290 417.5" class="court-line" />
+      <path d="M 220 430 H 280" class="court-line" />
+      <circle cx="250" cy="417.5" r="7.5" class="court-rim" />
+      <path d="M 30 470 L 30 328 A 237.5 237.5 0 0 1 470 328 L 470 470" class="court-line" />
+      <path d="M 190 0 A 60 60 0 0 0 310 0" class="court-line" />
+      ${markers}
+    </svg>
+  `;
+}
+
+function shotZoneTable(zones) {
+  if (!zones.length) return `<p class="footer-note">No zone data.</p>`;
+  return `
+    <div class="table-wrap">
+      <table class="zone-table">
+        <thead><tr><th>Zone</th><th>FGM</th><th>FGA</th><th>FG%</th></tr></thead>
+        <tbody>${zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.makes}</td>
+            <td>${zone.attempts}</td>
+            <td class="${zone.fg_pct >= 40 ? "positive" : zone.fg_pct < 30 ? "concern" : ""}">${zone.fg_pct}%</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = { loading: false, error: false, data };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    });
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -842,10 +943,12 @@ function renderPlayerDetail(slug) {
       </aside>
     </section>
     ${gameLogPanel(player.id)}
+    ${shotChartPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
   if (!state.gameLog[player.id]) loadGameLog(player.id);
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
 }
 
 function renderAlertsPage() {

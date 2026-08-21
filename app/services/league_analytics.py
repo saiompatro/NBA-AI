@@ -519,6 +519,27 @@ class LeagueAnalyticsService:
             "PlayerGameLog",
         )
 
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Season shot locations + a per-zone breakdown, playoffs first with a
+        regular-season fallback (same reason as the game log: a player whose team is
+        already out has no playoff shots to plot)."""
+        season_type = "Playoffs"
+        frame = self._shot_chart_frame(player_id, season, season_type)
+        if frame.empty:
+            season_type = "Regular Season"
+            frame = self._shot_chart_frame(player_id, season, season_type)
+        if frame.empty:
+            return shot_chart_payload([], "")
+        return shot_chart_payload(frame.to_dict("records"), season_type)
+
+    @lru_cache(maxsize=32)
+    def _shot_chart_frame(self, player_id: int, season: str, season_type: str) -> pd.DataFrame:
+        return self._stats_frame(
+            "shotchartdetail",
+            shot_chart_params(player_id, season, season_type),
+            "Shot_Chart_Detail",
+        )
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()
@@ -1344,6 +1365,148 @@ def common_dash_params(season: str, season_type: str, per_mode: str) -> dict[str
         "Period": "0",
         "PlusMinus": "N",
         "Rank": "N",
+    }
+
+
+# Shot chart. The shot-quality model already derives distance/angle per shot, but the
+# dashboard never showed *where* a player shoots from - a standard panel on NBA.com Stats,
+# Basketball-Reference, and Cleaning the Glass. NBA Stats returns LOC_X/LOC_Y in tenths of
+# a foot with the origin at the center of the rim, which the frontend maps onto an SVG
+# half court.
+SHOT_ZONE_ORDER = (
+    "Restricted Area",
+    "In The Paint (Non-RA)",
+    "Mid-Range",
+    "Left Corner 3",
+    "Right Corner 3",
+    "Above the Break 3",
+    "Backcourt",
+)
+
+_SHOT_CHART_MAX_SHOTS = 600  # marker cap for the SVG; zone rates are still computed on every shot
+
+
+def shot_zone_summary(shots: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Attempts / makes / FG% per SHOT_ZONE_BASIC, in court order (rim outwards)."""
+    tallies: dict[str, list[int]] = {}
+    for shot in shots:
+        zone = shot.get("zone") or "Unknown"
+        bucket = tallies.setdefault(zone, [0, 0])
+        bucket[0] += 1
+        if shot.get("made"):
+            bucket[1] += 1
+
+    def sort_key(zone: str) -> tuple[int, int]:
+        try:
+            order = SHOT_ZONE_ORDER.index(zone)
+        except ValueError:
+            order = len(SHOT_ZONE_ORDER)
+        return (order, -tallies[zone][0])
+
+    summary = []
+    for zone in sorted(tallies, key=sort_key):
+        attempts, makes = tallies[zone]
+        summary.append(
+            {
+                "zone": zone,
+                "attempts": attempts,
+                "makes": makes,
+                "fg_pct": round(makes / attempts * 100, 1) if attempts else 0.0,
+            }
+        )
+    return summary
+
+
+def shot_chart_params(player_id: int, season: str, season_type: str) -> dict[str, Any]:
+    # NBA Stats rejects shotchartdetail unless every filter key is present, even when
+    # blank - this mirrors what nba_api's ShotChartDetail endpoint sends. If nba_api is
+    # ever installed locally, sanity-check against nba_api/stats/endpoints/shotchartdetail.py
+    # and nba_api/stats/library/parameters.py.
+    return {
+        "AheadBehind": "",
+        "ClutchTime": "",
+        "ContextFilter": "",
+        "ContextMeasure": "FGA",   # every field-goal attempt (makes + misses)
+        "DateFrom": "",
+        "DateTo": "",
+        "EndPeriod": "",
+        "EndRange": "",
+        "GameID": "",              # empty = whole season, not a single game
+        "GameSegment": "",
+        "LastNGames": 0,
+        "LeagueID": "00",
+        "Location": "",
+        "Month": 0,
+        "OpponentTeamID": 0,
+        "Outcome": "",
+        "Period": 0,
+        "PlayerID": player_id,
+        "PlayerPosition": "",
+        "PointDiff": "",
+        "Position": "",
+        "RangeType": "",
+        "RookieYear": "",
+        "Season": season,
+        "SeasonSegment": "",
+        "SeasonType": season_type,
+        "StartPeriod": "",
+        "StartRange": "",
+        "TeamID": 0,               # 0 = all teams the player suited up for
+        "VsConference": "",
+        "VsDivision": "",
+    }
+
+
+def shot_chart_payload(records: list[dict[str, Any]], season_type: str) -> dict[str, Any]:
+    """Raw shotchartdetail rows -> the JSON the dashboard renders."""
+    shots: list[dict[str, Any]] = []
+    for item in records:
+        try:
+            x = int(float(item.get("LOC_X")))
+            y = int(float(item.get("LOC_Y")))
+        except (TypeError, ValueError):
+            continue
+        shots.append(
+            {
+                "x": x,
+                "y": y,
+                "made": int(float(item.get("SHOT_MADE_FLAG", 0) or 0)) == 1,
+                "shot_type": 3 if "3PT" in str(item.get("SHOT_TYPE", "")) else 2,
+                "zone": item.get("SHOT_ZONE_BASIC") or "Unknown",
+                "distance": int(float(item.get("SHOT_DISTANCE", 0) or 0)),
+                "period": int(float(item.get("PERIOD", 0) or 0)),
+                "action": str(item.get("ACTION_TYPE", "")),
+                "date": str(item.get("GAME_DATE", "")),
+            }
+        )
+
+    zones = shot_zone_summary(shots)
+
+    attempts = len(shots)
+    makes = sum(1 for shot in shots if shot["made"])
+    threes = [shot for shot in shots if shot["shot_type"] == 3]
+    fg3a = len(threes)
+    fg3m = sum(1 for shot in threes if shot["made"])
+    summary = {
+        "attempts": attempts,
+        "makes": makes,
+        "fg_pct": round(makes / attempts * 100, 1) if attempts else 0.0,
+        "fg3a": fg3a,
+        "fg3m": fg3m,
+        "fg3_pct": round(fg3m / fg3a * 100, 1) if fg3a else 0.0,
+        "avg_distance": round(sum(shot["distance"] for shot in shots) / attempts, 1) if attempts else 0.0,
+    }
+
+    truncated = len(shots) > _SHOT_CHART_MAX_SHOTS
+    if truncated:
+        shots = shots[-_SHOT_CHART_MAX_SHOTS:]
+
+    return {
+        "season_type": season_type,
+        "shots": shots,
+        "zones": zones,
+        "summary": summary,
+        "truncated": truncated,
     }
 
 

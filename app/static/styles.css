@@ -1043,6 +1043,97 @@ td {
   stroke: var(--accent);
 }
 
+.shot-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.court-svg {
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.court-paint {
+  fill: var(--line);
+  opacity: 0.35;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.court-rim {
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2.5;
+}
+
+.shot-make {
+  fill: none;
+  stroke: var(--green);
+  stroke-width: 2;
+  opacity: 0.85;
+}
+
+.shot-miss {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.7;
+}
+
+.shot-chart-summary {
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 0.8rem;
+  margin: 0 0 12px;
+}
+
+.shot-chart-legend {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-top: 10px;
+}
+
+.shot-chart-legend i {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.shot-chart-legend .make i {
+  background: var(--green);
+}
+
+.shot-chart-legend .miss i {
+  background: var(--red);
+}
+
+.zone-table {
+  min-width: 300px;
+}
+
 .shot-quality-meter > div {
   grid-column: 1 / -1;
 }
@@ -2071,6 +2162,7 @@ select {
   .mini-panels,
   .sentiment-layout,
   .profile-grid,
+  .shot-chart-layout,
   .live-detector-grid {
     grid-template-columns: 1fr;
   }

@@ -20,6 +20,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering)
 - **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
+- **Shot chart** — per-player half-court shot map on every profile: makes/misses plotted from NBA Stats `shotchartdetail` `LOC_X`/`LOC_Y` (tenths of a foot, origin at the rim) onto an inline SVG court, plus a zone breakdown table (attempts/makes/FG% per `SHOT_ZONE_BASIC`). Playoffs first with a regular-season fallback. Shot location is table stakes on NBA.com Stats, Basketball-Reference, and Cleaning the Glass — and the shot-quality model already derived distance and angle internally, so the data was there but nothing ever showed *where* a player actually shoots from
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
 - **Global search** — topbar search box for jumping straight to any player or team profile by name
@@ -106,6 +107,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/table`                                                  | Live playoff series scores by round (feeds the bracket page) |
 | GET    | `/api/players`                                                | Playoff player stats                          |
 | GET    | `/api/players/<id>/game-log`                                  | Real last-10 boxscore log for a player (playoffs, falling back to regular season) |
+| GET    | `/api/players/<id>/shot-chart`                                 | Season shot locations + per-zone FG% for a player (playoffs, falling back to regular season) |
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
@@ -152,6 +154,7 @@ This project uses the following **public, unauthenticated** data sources. No API
   - `nba_api.stats.endpoints.leaguedashplayerstats` — season player stats
   - `nba_api.stats.endpoints.leaguedashteamstats` — season team stats
   - `nba_api.stats.endpoints.playoffpicture` — playoff bracket picture
+  - `nba_api.stats.endpoints.shotchartdetail` — per-player shot locations and zones
 - **Data owner:** NBA Stats (`stats.nba.com`) — data is property of the NBA. Use is subject to [NBA Terms of Use](https://www.nba.com/tos).
 
 ### ESPN Public APIs
