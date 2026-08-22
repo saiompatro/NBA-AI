@@ -97,6 +97,22 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Shot charts. Every comparable site (NBA.com Stats, Basketball-Reference, Cleaning the
+# Glass) leads a player's profile with a shot chart and zone-vs-league-average shading;
+# this app runs a shot-quality model on live shots but never plotted a single shot
+# location. `shotchartdetail` is a free/unauthenticated stats.nba.com endpoint (like
+# every other endpoint this app already calls) that returns both the raw shot log and
+# the league's zone averages in one response.
+SHOT_ZONE_LABELS = {
+    "Restricted Area": "Restricted Area",
+    "In The Paint (Non-RA)": "Paint (Non-RA)",
+    "Mid-Range": "Mid-Range",
+    "Left Corner 3": "Corner 3",
+    "Right Corner 3": "Corner 3",
+    "Above the Break 3": "Above the Break 3",
+}
+SHOT_ZONE_ORDER = ["Restricted Area", "Paint (Non-RA)", "Mid-Range", "Corner 3", "Above the Break 3"]
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -518,6 +534,78 @@ class LeagueAnalyticsService:
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
         )
+
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Real shot locations plus zone FG% vs. league average for a player - see the
+        module comment above `SHOT_ZONE_LABELS` for why this fills a real gap. Playoffs
+        first with a regular-season fallback, same convention as `player_game_log`."""
+        shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Playoffs")
+        season_type = "Playoffs"
+        if shots_frame.empty:
+            shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Regular Season")
+            season_type = "Regular Season"
+        if shots_frame.empty:
+            return {
+                "ok": False,
+                "season_type": season_type,
+                "shots": [],
+                "zones": [],
+                "totals": {"fga": 0, "fgm": 0, "fg_pct": 0.0, "efg_pct": 0.0},
+            }
+
+        for column in ["SHOT_ATTEMPTED_FLAG", "SHOT_MADE_FLAG", "LOC_X", "LOC_Y", "SHOT_DISTANCE"]:
+            if column in shots_frame:
+                shots_frame[column] = pd.to_numeric(shots_frame[column], errors="coerce").fillna(0)
+        shot_records = shots_frame.to_dict("records")
+        league_records = league_frame.to_dict("records") if not league_frame.empty else []
+
+        total_fga = sum(int(row.get("SHOT_ATTEMPTED_FLAG", 0)) for row in shot_records)
+        total_fgm = sum(int(row.get("SHOT_MADE_FLAG", 0)) for row in shot_records)
+        three_rows = [row for row in shot_records if "3PT" in str(row.get("SHOT_TYPE", ""))]
+        three_fgm = sum(int(row.get("SHOT_MADE_FLAG", 0)) for row in three_rows)
+        fg_pct = round(100 * total_fgm / total_fga, 1) if total_fga else 0.0
+        efg_pct = round(100 * (total_fgm + 0.5 * three_fgm) / total_fga, 1) if total_fga else 0.0
+
+        shots = []
+        for row in shot_records[-400:]:
+            x, y = normalize_shot_location(row.get("LOC_X", 0), row.get("LOC_Y", 0))
+            shots.append(
+                {
+                    "x": x,
+                    "y": y,
+                    "made": bool(int(row.get("SHOT_MADE_FLAG", 0))),
+                    "zone": SHOT_ZONE_LABELS.get(str(row.get("SHOT_ZONE_BASIC", "")), "Other"),
+                    "distance": float(row.get("SHOT_DISTANCE", 0)),
+                }
+            )
+
+        return {
+            "ok": True,
+            "season_type": season_type,
+            "shots": shots,
+            "zones": shot_zone_summary(shot_records, league_records),
+            "totals": {"fga": total_fga, "fgm": total_fgm, "fg_pct": fg_pct, "efg_pct": efg_pct},
+        }
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        # Exact key set required by stats.nba.com/stats/shotchartdetail (see
+        # nba_api.stats.endpoints.shotchartdetail.ShotChartDetail.parameters) - most
+        # are left at their nba_api default ("" or "0"), only TeamID (all teams),
+        # PlayerID/Season/SeasonType, and ContextMeasure (FGA so misses come through
+        # too, not just makes) are set per call.
+        params = {
+            "TeamID": 0, "PlayerID": player_id, "ContextMeasure": "FGA", "LastNGames": "0",
+            "LeagueID": "00", "Month": "0", "OpponentTeamID": 0, "Period": "0",
+            "SeasonType": season_type, "AheadBehind": "", "ClutchTime": "", "ContextFilter": "",
+            "DateFrom": "", "DateTo": "", "EndPeriod": "", "EndRange": "", "GameID": "",
+            "GameSegment": "", "Location": "", "Outcome": "", "PlayerPosition": "",
+            "PointDiff": "", "Position": "", "RangeType": "", "RookieYear": "", "Season": season,
+            "SeasonSegment": "", "StartPeriod": "", "StartRange": "", "VsConference": "",
+            "VsDivision": "",
+        }
+        result_sets = self._stats_result_sets("shotchartdetail", params)
+        return result_sets.get("Shot_Chart_Detail", pd.DataFrame()), result_sets.get("LeagueAverages", pd.DataFrame())
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
@@ -1133,6 +1221,15 @@ class LeagueAnalyticsService:
         }
 
     def _stats_frame(self, endpoint: str, params: dict[str, Any], result_name: str) -> pd.DataFrame:
+        result_sets = self._stats_result_sets(endpoint, params)
+        if result_name in result_sets:
+            return result_sets[result_name]
+        return next(iter(result_sets.values()), pd.DataFrame())
+
+    def _stats_result_sets(self, endpoint: str, params: dict[str, Any]) -> dict[str, pd.DataFrame]:
+        """Fetch a stats.nba.com endpoint and return every named result set it carries,
+        keyed by name. Some endpoints (e.g. `shotchartdetail`) return more than one
+        result set in a single response - `_stats_frame` picks one, this exposes all."""
         try:
             response = requests.get(
                 f"https://stats.nba.com/stats/{endpoint}",
@@ -1143,10 +1240,12 @@ class LeagueAnalyticsService:
             )
             response.raise_for_status()
             result_sets = response.json().get("resultSets", [])
-            selected = next((item for item in result_sets if item.get("name") == result_name), result_sets[0])
-            return pd.DataFrame(selected.get("rowSet", []), columns=selected.get("headers", []))
+            return {
+                item.get("name", ""): pd.DataFrame(item.get("rowSet", []), columns=item.get("headers", []))
+                for item in result_sets
+            }
         except Exception:
-            return pd.DataFrame()
+            return {}
 
     @lru_cache(maxsize=16)
     def _espn_scoreboard(self, game_date: date) -> list[dict[str, Any]]:
@@ -1458,6 +1557,63 @@ def player_advanced_fallback(pts: float, minutes: float, impact: float) -> dict[
         "usg_pct": round(min(38.0, max(10.0, (pts / max(minutes, 1.0)) * 85.0)), 1),
         "pie": round(min(30.0, max(3.0, impact * 0.35)), 1),
     }
+
+
+def normalize_shot_location(loc_x: float, loc_y: float) -> tuple[float, float]:
+    """Clamp raw `shotchartdetail` LOC_X/LOC_Y (tenths-of-a-foot, hoop-origin) into
+    court bounds so a stray/backcourt heave can't blow out the SVG viewBox."""
+    x = max(-250.0, min(250.0, float(loc_x)))
+    y = max(-47.5, min(422.5, float(loc_y)))
+    return (x, y)
+
+
+def shot_zone_summary(shot_records: list[dict[str, Any]], league_records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group raw shot rows into the zones in `SHOT_ZONE_ORDER`, each with the player's
+    FG% against the league's FG% in that same zone (from the `LeagueAverages` result
+    set the same endpoint call already returns) - this is the zone-vs-league-average
+    shading every comparable shot-chart page (NBA.com, Cleaning the Glass) leads with."""
+    player_totals: dict[str, dict[str, int]] = {}
+    total_fga = 0
+    for row in shot_records:
+        label = SHOT_ZONE_LABELS.get(str(row.get("SHOT_ZONE_BASIC", "")))
+        if not label:
+            continue
+        attempted = int(row.get("SHOT_ATTEMPTED_FLAG", 0) or 0)
+        made = int(row.get("SHOT_MADE_FLAG", 0) or 0)
+        bucket = player_totals.setdefault(label, {"fga": 0, "fgm": 0})
+        bucket["fga"] += attempted
+        bucket["fgm"] += made
+        total_fga += attempted
+
+    league_totals: dict[str, dict[str, int]] = {}
+    for row in league_records:
+        label = SHOT_ZONE_LABELS.get(str(row.get("SHOT_ZONE_BASIC", "")))
+        if not label:
+            continue
+        bucket = league_totals.setdefault(label, {"fga": 0, "fgm": 0})
+        bucket["fga"] += int(row.get("FGA", 0) or 0)
+        bucket["fgm"] += int(row.get("FGM", 0) or 0)
+
+    zones = []
+    for label in SHOT_ZONE_ORDER:
+        stats = player_totals.get(label)
+        if not stats or not stats["fga"]:
+            continue
+        fg_pct = round(100 * stats["fgm"] / stats["fga"], 1)
+        league_stats = league_totals.get(label, {"fga": 0, "fgm": 0})
+        league_fg_pct = round(100 * league_stats["fgm"] / league_stats["fga"], 1) if league_stats["fga"] else 0.0
+        zones.append(
+            {
+                "zone": label,
+                "fga": stats["fga"],
+                "fgm": stats["fgm"],
+                "fg_pct": fg_pct,
+                "league_fg_pct": league_fg_pct,
+                "delta": round(fg_pct - league_fg_pct, 1),
+                "share": round(100 * stats["fga"] / total_fga, 1) if total_fga else 0.0,
+            }
+        )
+    return zones
 
 
 def clutch_fallback(net_rating: float) -> dict[str, Any]:

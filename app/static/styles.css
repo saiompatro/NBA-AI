@@ -1043,6 +1043,68 @@ td {
   stroke: var(--accent);
 }
 
+.shot-chart-wrap {
+  margin: 4px 0 22px;
+}
+
+.shot-court-svg {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  display: block;
+  margin: 0 auto;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.shot-made {
+  fill: var(--green);
+  fill-opacity: 0.85;
+}
+
+.shot-miss {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 2;
+  opacity: 0.75;
+}
+
+.shot-chart-legend {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  margin-top: 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.shot-chart-legend span::before {
+  content: "";
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 5px;
+  vertical-align: middle;
+}
+
+.shot-chart-legend .legend-made::before {
+  background: var(--green);
+}
+
+.shot-chart-legend .legend-miss::before {
+  background: transparent;
+  border: 2px solid var(--red);
+}
+
 .shot-quality-meter > div {
   grid-column: 1 / -1;
 }
