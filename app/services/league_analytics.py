@@ -689,10 +689,17 @@ class LeagueAnalyticsService:
                 continue
         return games
 
-    def upcoming_games(self) -> list[dict[str, Any]]:
+    def upcoming_games(self, days: int = 8) -> list[dict[str, Any]]:
+        """Upcoming games over the next `days` days (default 8, matching prior behavior).
+
+        `days` also caps the number of games returned, same as the old hard-coded
+        8-game limit did — callers that want more games (e.g. a full schedule page)
+        can pass a larger `days` value.
+        """
+        days = max(1, int(days))
         games: list[dict[str, Any]] = []
         today = date.today()
-        for offset in range(0, 8):
+        for offset in range(0, days):
             events = self._espn_scoreboard(today + timedelta(days=offset))
             for event in events:
                 competitions = event.get("competitions") or []
@@ -710,9 +717,9 @@ class LeagueAnalyticsService:
                         "status": event.get("status", {}).get("type", {}).get("shortDetail", "Scheduled"),
                     }
                 )
-            if len(games) >= 8:
+            if len(games) >= days:
                 break
-        return games[:8] or fallback_upcoming_games()
+        return games[:days] or fallback_upcoming_games()
 
     def _out_players_for_team(
         self, team_abbr: str, players: list[dict[str, Any]]

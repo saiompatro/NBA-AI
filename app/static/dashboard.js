@@ -7,6 +7,7 @@ const state = {
   leader: "pts",
   playerFilter: "ALL",
   playerSort: "default",
+  scheduleFilter: "ALL",
   predictions: {},
   news: {},
   compare: { a: null, b: null },
@@ -43,6 +44,7 @@ const els = {
   teamsGrid: document.getElementById("teamsGrid"),
   teamDetailPage: document.getElementById("teamDetailPage"),
   playerDetailPage: document.getElementById("playerDetailPage"),
+  schedulePage: document.getElementById("schedulePage"),
   alertsPage: document.getElementById("alertsPage"),
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
@@ -155,6 +157,11 @@ function route() {
   if (section === "live") {
     renderLivePage();
     setActivePage("livePage", "live");
+    return;
+  }
+  if (section === "schedule") {
+    renderSchedulePage();
+    setActivePage("schedulePage", "schedule");
     return;
   }
   if (section === "alerts") {
@@ -274,8 +281,6 @@ function renderUpcomingGames() {
   els.upcomingList.innerHTML = games.slice(0, 5).map((game) => {
     const away = teams[game.away] || {};
     const home = teams[game.home] || {};
-    const pickTeam = Number(home.net || 0) >= Number(away.net || 0) ? home : away;
-    const confidence = Math.min(78, Math.max(56, 61 + Math.abs(Number(home.net || 0) - Number(away.net || 0))));
     return `
       <div class="game-row">
         <time>${formatTime(game.date)}</time>
@@ -289,7 +294,7 @@ function renderUpcomingGames() {
             <strong>${html(home.team || game.home || "Home")}</strong><span>${game.home}</span>
           </a>
         </div>
-        <div class="game-pick">${pickTeam.abbr || "TBD"}<br />${confidence.toFixed(0)}%</div>
+        <a class="game-pick" href="#/schedule">Run Model<span aria-hidden="true"> -></span></a>
       </div>
     `;
   }).join("");
@@ -888,22 +893,34 @@ function renderPredictionResult(game, result) {
   `;
 }
 
+// Re-renders whichever page actually has "Run Model" buttons on screen right
+// now (Predictions or Schedule), so runGamePrediction below can be triggered
+// from either page without duplicating its fetch/state logic.
+function renderCurrentPredictionConsumer() {
+  const section = location.hash.replace(/^#\/?/, "").split("/")[0];
+  if (section === "schedule") {
+    renderSchedulePage();
+  } else {
+    renderPredictionsPage();
+  }
+}
+
 function runGamePrediction(button) {
   const key = button.dataset.predictionKey;
   const away = button.dataset.away;
   const home = button.dataset.home;
   state.predictions[key] = { loading: true };
-  renderPredictionsPage();
+  renderCurrentPredictionConsumer();
   const params = new URLSearchParams({ away, home });
   fetch(`/api/game-prediction?${params.toString()}`)
     .then((response) => response.json())
     .then((data) => {
       state.predictions[key] = data;
-      renderPredictionsPage();
+      renderCurrentPredictionConsumer();
     })
     .catch(() => {
       state.predictions[key] = { ok: false, message: "The model could not run right now." };
-      renderPredictionsPage();
+      renderCurrentPredictionConsumer();
     });
 }
 
@@ -929,6 +946,88 @@ function renderPredictionsPage() {
       }).join("")}
     </div>
   `;
+}
+
+function groupGamesByDate(games) {
+  const groups = [];
+  const byKey = new Map();
+  games.forEach((game) => {
+    const key = game.date ? new Date(game.date).toDateString() : "tbd";
+    let group = byKey.get(key);
+    if (!group) {
+      group = { date: game.date || null, games: [] };
+      byKey.set(key, group);
+      groups.push(group);
+    }
+    group.games.push(game);
+  });
+  return groups;
+}
+
+function renderSchedulePage() {
+  const teams = teamMap();
+  const filter = state.scheduleFilter || "ALL";
+  const games = (state.analytics.upcoming_games || []).filter(
+    (game) => filter === "ALL" || game.away === filter || game.home === filter
+  );
+  const groups = groupGamesByDate(games);
+  const filterOptions = [`<option value="ALL">All Playoff Teams</option>`]
+    .concat((state.analytics.teams || []).map((team) => `<option value="${team.abbr}">${html(team.team)}</option>`))
+    .join("");
+
+  els.schedulePage.innerHTML = `
+    <div class="page-heading">
+      <div>
+        <h1>Schedule</h1>
+        <p>Every upcoming game, grouped by date. Run the model on any matchup for a plain-language pick.</p>
+      </div>
+      <div class="filter-group">
+        <select data-schedule-filter aria-label="Filter schedule by team">${filterOptions}</select>
+      </div>
+    </div>
+    ${groups.length ? `
+      <div class="schedule-list">
+        ${groups.map((group) => `
+          <article class="panel schedule-day-panel">
+            <div class="panel-heading">
+              <h2>${group.date ? formatDate(group.date) : "Date TBD"}</h2>
+              <span>${group.games.length} game${group.games.length === 1 ? "" : "s"}</span>
+            </div>
+            <div class="schedule-day-games">
+              ${group.games.map((game) => {
+                const away = teams[game.away] || {};
+                const home = teams[game.home] || {};
+                const key = predictionKey(game);
+                const result = state.predictions[key];
+                return `
+                  <div class="schedule-game-row">
+                    <time>${formatTime(game.date)}</time>
+                    <div class="game-matchup">
+                      <a class="game-team" href="#/teams/${away.slug || ""}">
+                        ${away.logo ? `<img class="logo" src="${away.logo}" alt="" />` : ""}
+                        <strong>${html(away.team || game.away || "Away")}</strong><span>${html(game.away)}</span>
+                      </a>
+                      <a class="game-team" href="#/teams/${home.slug || ""}">
+                        ${home.logo ? `<img class="logo" src="${home.logo}" alt="" />` : ""}
+                        <strong>${html(home.team || game.home || "Home")}</strong><span>${html(game.home)}</span>
+                      </a>
+                    </div>
+                    <div class="schedule-game-actions">
+                      <span class="sentiment-pill neutral">${html(game.status || "Scheduled")}</span>
+                      <button class="action-button" type="button" data-run-prediction data-prediction-key="${html(key)}" data-away="${html(game.away)}" data-home="${html(game.home)}">${result?.loading ? "Running..." : "Run Model"}</button>
+                    </div>
+                    <div class="schedule-prediction">${renderPredictionResult(game, result)}</div>
+                  </div>
+                `;
+              }).join("")}
+            </div>
+          </article>
+        `).join("")}
+      </div>
+    ` : `<article class="panel"><p>No upcoming games found${filter !== "ALL" ? ` for ${html(filter)}` : ""}.</p></article>`}
+  `;
+  const filterSelect = els.schedulePage.querySelector("[data-schedule-filter]");
+  if (filterSelect) filterSelect.value = filter;
 }
 
 function renderSettingsPage() {
@@ -1350,10 +1449,18 @@ els.playerSortFilter.addEventListener("change", () => {
 });
 
 document.addEventListener("change", (event) => {
-  const select = event.target.closest("[data-compare-select]");
-  if (!select) return;
-  state.compare[select.dataset.compareSelect] = select.value;
-  renderComparePage();
+  const compareSelect = event.target.closest("[data-compare-select]");
+  if (compareSelect) {
+    state.compare[compareSelect.dataset.compareSelect] = compareSelect.value;
+    renderComparePage();
+    return;
+  }
+
+  const scheduleFilter = event.target.closest("[data-schedule-filter]");
+  if (scheduleFilter) {
+    state.scheduleFilter = scheduleFilter.value;
+    renderSchedulePage();
+  }
 });
 
 document.addEventListener("click", (event) => {

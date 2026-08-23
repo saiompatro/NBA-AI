@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=25" />
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}?v=26" />
   </head>
   <body>
     <div class="app-shell">
@@ -25,6 +25,10 @@
           <a class="side-link active" href="#/table" data-nav="table">
             <span class="nav-icon trophy-icon" aria-hidden="true"></span>
             <span>Table</span>
+          </a>
+          <a class="side-link" href="#/schedule" data-nav="schedule">
+            <span class="nav-icon calendar-icon" aria-hidden="true"></span>
+            <span>Schedule</span>
           </a>
           <a class="side-link" href="#/players" data-nav="players">
             <span class="nav-icon player-icon" aria-hidden="true"></span>
@@ -118,7 +122,7 @@
                 <span id="scheduleDate">Schedule</span>
               </div>
               <div id="upcomingList" class="game-list"></div>
-              <a class="panel-link" href="#/predictions">View Full Schedule <span aria-hidden="true">-></span></a>
+              <a class="panel-link" href="#/schedule">View Full Schedule <span aria-hidden="true">-></span></a>
             </article>
 
             <article class="panel live-panel">
@@ -217,6 +221,7 @@
 
         <section class="page" id="teamDetailPage"></section>
         <section class="page" id="playerDetailPage"></section>
+        <section class="page" id="schedulePage"></section>
         <section class="page" id="alertsPage"></section>
         <section class="page" id="predictionsPage"></section>
         <section class="page" id="comparePage"></section>
@@ -232,6 +237,6 @@
     </div>
 
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script src="{{ url_for('static', filename='dashboard.js') }}?v=25"></script>
+    <script src="{{ url_for('static', filename='dashboard.js') }}?v=26"></script>
   </body>
 </html>

@@ -77,7 +77,10 @@ def create_app() -> Flask:
 
     @app.get("/api/schedule")
     def schedule():
-        return jsonify({"upcoming_games": analytics.upcoming_games()})
+        days = request.args.get("days", type=int)
+        if days is None or days < 1:
+            return jsonify({"upcoming_games": analytics.upcoming_games()})
+        return jsonify({"upcoming_games": analytics.upcoming_games(days=days)})
 
     @app.get("/api/game-prediction")
     def game_prediction():

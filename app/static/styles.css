@@ -327,6 +327,25 @@ a {
   background: currentColor;
 }
 
+.calendar-icon::before {
+  content: "";
+  position: absolute;
+  inset: 5px 3px 3px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.calendar-icon::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  top: 2px;
+  height: 5px;
+  border-left: 2px solid currentColor;
+  border-right: 2px solid currentColor;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -844,14 +863,24 @@ td {
 }
 
 .game-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
   color: var(--ink);
-  font-size: 0.85rem;
+  font-size: 0.78rem;
   font-weight: 700;
   text-align: right;
   padding: 8px 12px;
   background: var(--accent-soft);
   border-radius: 4px;
   border: 1px solid rgba(237, 79, 28, 0.18);
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.game-pick:hover {
+  background: var(--accent);
+  color: #ffffff;
 }
 
 .live-empty {
@@ -1770,6 +1799,53 @@ select {
   font-size: 0.82rem;
 }
 
+.schedule-list {
+  display: grid;
+  gap: 16px;
+}
+
+.schedule-day-panel .panel-heading span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.schedule-day-games {
+  display: grid;
+  gap: 12px;
+}
+
+.schedule-game-row {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.schedule-game-row time {
+  color: #273243;
+  font-size: 0.92rem;
+  line-height: 1.1;
+}
+
+.schedule-game-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.schedule-prediction {
+  grid-column: 1 / -1;
+}
+
+.schedule-prediction .prediction-result {
+  margin-top: 4px;
+}
+
 .news-panel {
   margin-top: 18px;
 }
@@ -2087,6 +2163,7 @@ select {
   }
 
   .game-row,
+  .schedule-game-row,
   .detail-hero,
   .page-heading,
   .prediction-card-top {
@@ -2096,6 +2173,10 @@ select {
   .prediction-card-top {
     display: grid;
     align-items: stretch;
+  }
+
+  .schedule-game-actions {
+    justify-content: space-between;
   }
 
   .detail-hero {
