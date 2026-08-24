@@ -29,6 +29,11 @@ class ShotQualityResult:
         }
 
 
+def is_field_goal_action(action: dict[str, Any]) -> bool:
+    """True for 2pt/3pt attempts (free throws have isFieldGoal == 0)."""
+    return action.get("isFieldGoal") == 1 or action.get("actionType") in {"2pt", "3pt"}
+
+
 class ShotQualityService:
     """Linked shot-quality model fed by NBA data, not user-entered controls."""
 
@@ -44,13 +49,7 @@ class ShotQualityService:
     ) -> ShotQualityResult:
         shot_action = self._latest_field_goal_action(actions)
         if shot_action:
-            context = self._context_from_action(shot_action, period, time_remaining, score_diff)
-            return ShotQualityResult(
-                context=context,
-                shot_quality=self.model.predict(context),
-                source="nba_api live play-by-play",
-                action_description=shot_action.get("description") or "Latest field goal action",
-            )
+            return self.score_action(shot_action, period, time_remaining, score_diff)
 
         return self.from_game_state(period, time_remaining, score_diff)
 
@@ -68,6 +67,22 @@ class ShotQualityService:
             shot_quality=self.model.predict(context),
             source="derived from game state",
             action_description="No shot-tracking action available yet",
+        )
+
+    def score_action(
+        self,
+        action: dict[str, Any],
+        period: int,
+        time_remaining: int,
+        score_diff: int,
+    ) -> ShotQualityResult:
+        """Score one specific field-goal action (used by the live shot chart)."""
+        context = self._context_from_action(action, period, time_remaining, score_diff)
+        return ShotQualityResult(
+            context=context,
+            shot_quality=self.model.predict(context),
+            source="nba_api live play-by-play",
+            action_description=action.get("description") or "Latest field goal action",
         )
 
     def _context_from_action(
@@ -104,7 +119,7 @@ class ShotQualityService:
     @staticmethod
     def _latest_field_goal_action(actions: list[dict[str, Any]]) -> dict[str, Any] | None:
         for action in reversed(actions):
-            if action.get("isFieldGoal") == 1 or action.get("actionType") in {"2pt", "3pt"}:
+            if is_field_goal_action(action):
                 return action
         return None
 

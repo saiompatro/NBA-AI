@@ -1043,6 +1043,39 @@ td {
   stroke: var(--accent);
 }
 
+.shot-chart { margin: 4px 0 6px; }
+.shot-chart-heading {
+  display: flex; justify-content: space-between;
+  color: var(--muted); font-size: .7rem; font-weight: 800; text-transform: uppercase; margin-bottom: 6px;
+}
+.shot-chart-svg {
+  display: block; width: 100%; max-width: 420px; height: auto; margin: 0 auto;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2);
+}
+.shot-chart-court { fill: none; stroke: var(--line-strong); stroke-width: 2; }
+.shot-chart-key { fill: var(--surface); stroke: var(--line-strong); stroke-width: 2; }
+.shot-chart-line { fill: none; stroke: var(--line-strong); stroke-width: 2; stroke-linecap: round; }
+.shot-chart-hoop { fill: none; stroke: var(--accent); stroke-width: 2; }
+.shot-chart-dot { stroke-width: 2; opacity: .85; }
+.shot-chart-dot.made { fill: var(--green); stroke: none; }
+.shot-chart-dot.missed { fill: none; stroke: var(--red); }
+.shot-chart-dot.unknown { fill: var(--subtle); stroke: none; opacity: .45; }
+.shot-chart-dot.latest { stroke: var(--accent); stroke-width: 2.5; }
+.shot-chart-legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; margin-top: 8px;
+  color: var(--muted); font-size: .7rem; font-weight: 800; text-transform: uppercase;
+}
+.shot-chart-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.shot-chart-legend i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.shot-chart-legend i.made { background: var(--green); }
+.shot-chart-legend i.missed { background: transparent; border: 2px solid var(--red); }
+.shot-chart-legend i.unknown { background: var(--subtle); opacity: .5; }
+.shot-chart-legend-note { margin-left: auto; text-transform: none; font-weight: 700; color: var(--subtle); }
+.shot-chart-empty {
+  padding: 24px 12px; text-align: center; border: 1px dashed var(--line); border-radius: 6px;
+  color: var(--muted); font-size: .85rem; font-weight: 700;
+}
+
 .shot-quality-meter > div {
   grid-column: 1 / -1;
 }
