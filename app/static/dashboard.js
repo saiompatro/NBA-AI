@@ -19,6 +19,7 @@ const state = {
   modelPerformanceLoading: false,
   shotQuality: null,
   shotQualityLoading: false,
+  scoreboard: { selected: todayISO(), cache: {} },
 };
 
 const els = {
@@ -41,6 +42,7 @@ const els = {
   playerSortFilter: document.getElementById("playerSortFilter"),
   playersGrid: document.getElementById("playersGrid"),
   teamsGrid: document.getElementById("teamsGrid"),
+  schedulePage: document.getElementById("schedulePage"),
   teamDetailPage: document.getElementById("teamDetailPage"),
   playerDetailPage: document.getElementById("playerDetailPage"),
   alertsPage: document.getElementById("alertsPage"),
@@ -170,6 +172,11 @@ function route() {
   if (section === "compare") {
     renderComparePage();
     setActivePage("comparePage", "compare");
+    return;
+  }
+  if (section === "schedule") {
+    renderSchedulePage();
+    setActivePage("schedulePage", "schedule");
     return;
   }
   if (section === "power-rankings") {
@@ -611,6 +618,140 @@ function renderTeamsPage() {
       </div>
     </a>
   `).join("");
+}
+
+function todayISO() {
+  return isoDate(new Date());
+}
+
+function isoDate(dateObj) {
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, "0");
+  const day = String(dateObj.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function shiftISODate(iso, offsetDays) {
+  const parsed = new Date(`${iso}T00:00:00`);
+  parsed.setDate(parsed.getDate() + offsetDays);
+  return isoDate(parsed);
+}
+
+function formatScheduleHeading(iso) {
+  const label = new Date(`${iso}T00:00:00`).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+  return iso === todayISO() ? `Today - ${label}` : label;
+}
+
+function loadScoreboard(dateIso) {
+  fetch(`/api/scoreboard?date=${dateIso}`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.scoreboard.cache[dateIso] = { loading: false, error: false, games: data.games || [] };
+      if (state.scoreboard.selected === dateIso) renderSchedulePage();
+    })
+    .catch(() => {
+      state.scoreboard.cache[dateIso] = { loading: false, error: true, games: [] };
+      if (state.scoreboard.selected === dateIso) renderSchedulePage();
+    });
+}
+
+function renderScheduleToolbar() {
+  const selected = state.scoreboard.selected;
+  const chips = [];
+  for (let offset = -3; offset <= 3; offset += 1) {
+    const chipDate = shiftISODate(selected, offset);
+    const chipObj = new Date(`${chipDate}T00:00:00`);
+    chips.push(`
+      <button type="button" class="schedule-chip ${chipDate === selected ? "active" : ""} ${chipDate === todayISO() ? "is-today" : ""}" data-schedule-date="${chipDate}">
+        <span>${chipObj.toLocaleDateString([], { weekday: "short" })}</span>
+        <strong>${chipObj.getDate()}</strong>
+      </button>
+    `);
+  }
+  return `
+    <div class="schedule-toolbar">
+      <button class="icon-button schedule-nav-button" type="button" data-schedule-nav="-1" aria-label="Previous day">&larr;</button>
+      <div class="schedule-toolbar-center">
+        <strong>${formatScheduleHeading(selected)}</strong>
+        ${selected !== todayISO() ? `<button class="action-button small" type="button" data-schedule-today>Today</button>` : ""}
+      </div>
+      <button class="icon-button schedule-nav-button" type="button" data-schedule-nav="1" aria-label="Next day">&rarr;</button>
+    </div>
+    <div class="schedule-chip-strip">${chips.join("")}</div>
+  `;
+}
+
+const SCORE_GROUPS = [
+  { key: "in", label: "Live" },
+  { key: "post", label: "Final" },
+  { key: "pre", label: "Scheduled" },
+];
+
+function scoreCardTeam(team, game) {
+  const known = teamMap()[team.abbr];
+  const slug = known?.slug || "";
+  const isFinal = game.status === "post";
+  const rowClass = isFinal ? (team.winner ? "score-card-winner" : "score-card-loser") : "";
+  return `
+    <a class="score-card-team ${rowClass}" href="#/teams/${slug}">
+      ${team.logo ? `<img class="logo" src="${html(team.logo)}" alt="" />` : ""}
+      <span class="score-card-team-info">
+        <strong>${html(team.name || team.abbr || "TBD")}</strong>
+        <small>${html(team.record || "")}</small>
+      </span>
+      <span class="score-card-score">${game.status === "pre" ? "" : team.score ?? "--"}</span>
+    </a>
+  `;
+}
+
+function scoreCard(game) {
+  return `
+    <article class="score-card score-card-${game.status}">
+      <div class="score-card-status">${game.status === "in" ? `<span class="live-dot"></span>` : ""}${html(game.status_detail || "")}</div>
+      ${scoreCardTeam(game.away, game)}
+      ${scoreCardTeam(game.home, game)}
+    </article>
+  `;
+}
+
+function renderScoreGroups(games) {
+  return SCORE_GROUPS.map(({ key, label }) => {
+    const rows = games.filter((game) => game.status === key);
+    if (!rows.length) return "";
+    return `
+      <section class="score-group">
+        <h3 class="score-group-heading">${label} <span>(${rows.length})</span></h3>
+        <div class="score-grid">${rows.map(scoreCard).join("")}</div>
+      </section>
+    `;
+  }).join("");
+}
+
+function renderSchedulePage() {
+  const selected = state.scoreboard.selected;
+  if (!state.scoreboard.cache[selected]) {
+    state.scoreboard.cache[selected] = { loading: true, error: false, games: [] };
+    loadScoreboard(selected);
+  }
+  const entry = state.scoreboard.cache[selected];
+  const toolbar = renderScheduleToolbar();
+
+  let body;
+  if (entry.loading) {
+    body = `<article class="panel"><p class="footer-note">Loading schedule...</p></article>`;
+  } else if (entry.error) {
+    body = `<article class="panel"><p class="footer-note">Unable to load the schedule right now.</p></article>`;
+  } else if (!entry.games.length) {
+    body = `<article class="panel schedule-empty"><p>No NBA games scheduled on this date.</p></article>`;
+  } else {
+    body = renderScoreGroups(entry.games);
+  }
+
+  els.schedulePage.innerHTML = `
+    <div class="page-heading"><div><h1>Schedule &amp; Scores</h1><p>Browse any date for tip times, live scores, and final results.</p></div></div>
+    ${toolbar}
+    <div class="schedule-body">${body}</div>
+  `;
 }
 
 function formatArticleDate(value) {
@@ -1360,6 +1501,27 @@ document.addEventListener("click", (event) => {
   const predictionButton = event.target.closest("[data-run-prediction]");
   if (predictionButton) {
     runGamePrediction(predictionButton);
+    return;
+  }
+
+  const scheduleNavButton = event.target.closest("[data-schedule-nav]");
+  if (scheduleNavButton) {
+    state.scoreboard.selected = shiftISODate(state.scoreboard.selected, Number(scheduleNavButton.dataset.scheduleNav));
+    renderSchedulePage();
+    return;
+  }
+
+  const scheduleTodayButton = event.target.closest("[data-schedule-today]");
+  if (scheduleTodayButton) {
+    state.scoreboard.selected = todayISO();
+    renderSchedulePage();
+    return;
+  }
+
+  const scheduleChip = event.target.closest("[data-schedule-date]");
+  if (scheduleChip) {
+    state.scoreboard.selected = scheduleChip.dataset.scheduleDate;
+    renderSchedulePage();
     return;
   }
 

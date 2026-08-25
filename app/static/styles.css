@@ -327,6 +327,25 @@ a {
   background: currentColor;
 }
 
+.calendar-icon::before {
+  content: "";
+  position: absolute;
+  inset: 5px 2px 2px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.calendar-icon::after {
+  content: "";
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  top: 8px;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 4px -6px 0 0 currentColor, -4px -6px 0 0 currentColor;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -1974,6 +1993,199 @@ select {
   grid-template-columns: repeat(auto-fit, minmax(200px, 320px));
 }
 
+.schedule-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin-bottom: 14px;
+}
+
+.schedule-nav-button {
+  border: 1px solid var(--line);
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.schedule-toolbar-center {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 220px;
+  justify-content: center;
+}
+
+.schedule-toolbar-center strong {
+  color: var(--ink);
+  font-size: 1.05rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.schedule-chip-strip {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 22px;
+  flex-wrap: wrap;
+}
+
+.schedule-chip {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 52px;
+  padding: 8px 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.schedule-chip span {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.schedule-chip strong {
+  color: var(--ink);
+  font-size: 1rem;
+}
+
+.schedule-chip.is-today:not(.active) {
+  border-color: var(--accent);
+}
+
+.schedule-chip.active {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #ffffff;
+}
+
+.schedule-chip.active strong {
+  color: #ffffff;
+}
+
+.schedule-body .footer-note {
+  margin-top: 0;
+}
+
+.schedule-empty {
+  padding: 34px 20px;
+  text-align: center;
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.score-group {
+  margin-bottom: 24px;
+}
+
+.score-group-heading {
+  margin: 0 0 12px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.score-group-heading span {
+  color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+}
+
+.score-card {
+  display: grid;
+  gap: 2px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.score-card-in {
+  border-color: var(--accent);
+}
+
+.score-card-status {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.live-dot {
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 0 4px var(--green-soft);
+}
+
+.score-card-team {
+  display: grid;
+  grid-template-columns: 30px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  color: var(--ink);
+}
+
+.score-card-team-info {
+  display: grid;
+  min-width: 0;
+}
+
+.score-card-team-info strong {
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-card-team-info small {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.score-card-score {
+  color: var(--ink-2);
+  font-size: 1.1rem;
+  font-weight: 700;
+  text-align: right;
+  min-width: 24px;
+}
+
+.score-card-winner .score-card-team-info strong,
+.score-card-winner .score-card-score {
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.score-card-loser {
+  opacity: 0.65;
+}
+
 .footer-note {
   margin-top: 22px;
   color: #737f8d;
@@ -2002,7 +2214,11 @@ select {
 
 @media (max-width: 860px) {
   .app-shell {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr), not a bare 1fr: a bare 1fr track has an implicit
+       min-content floor, so the mobile nav's non-wrapping links (which rely
+       on their own overflow-x:auto strip) were stretching this whole column
+       - and every page inside it - out to their un-scrolled width. */
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .sidebar {
@@ -2108,6 +2324,10 @@ select {
   .detector-stats {
     grid-template-columns: repeat(2, 1fr);
   }
+
+  .score-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 520px) {
@@ -2143,5 +2363,22 @@ select {
     width: 100%;
     height: auto;
     aspect-ratio: 16 / 9;
+  }
+
+  .schedule-toolbar {
+    gap: 10px;
+  }
+
+  .schedule-toolbar-center {
+    min-width: 0;
+  }
+
+  .schedule-chip {
+    min-width: 42px;
+    padding: 6px 4px;
+  }
+
+  .score-card-team {
+    grid-template-columns: 26px 1fr auto;
   }
 }

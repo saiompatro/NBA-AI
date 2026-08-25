@@ -714,6 +714,18 @@ class LeagueAnalyticsService:
                 break
         return games[:8] or fallback_upcoming_games()
 
+    def scoreboard_for_date(self, game_date: date) -> list[dict[str, Any]]:
+        """Full day's scoreboard (any status: scheduled/live/final) for the
+        Schedule & Scores page, reusing the same ESPN scoreboard fetcher that
+        already backs `upcoming_games`. Returns `[]` on a day with no games -
+        no synthetic placeholder rows, unlike `upcoming_games`."""
+        games: list[dict[str, Any]] = []
+        for event in self._espn_scoreboard(game_date):
+            normalized = normalize_scoreboard_event(event)
+            if normalized:
+                games.append(normalized)
+        return games
+
     def _out_players_for_team(
         self, team_abbr: str, players: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -1414,6 +1426,57 @@ def normalize_espn_article(article: dict[str, Any]) -> dict[str, Any]:
         "url": web_link.get("href") or "",
         "image": image,
         "source": article.get("source") or "ESPN",
+    }
+
+
+def _scoreboard_team(competitor: dict[str, Any]) -> dict[str, Any]:
+    team = competitor.get("team", {}) or {}
+    record = ""
+    for entry in competitor.get("records", []) or []:
+        if entry.get("type") == "total" or entry.get("name") == "overall":
+            record = entry.get("summary", "")
+            break
+    if not record and competitor.get("records"):
+        record = competitor["records"][0].get("summary", "")
+    score = competitor.get("score", "")
+    return {
+        "abbr": normalize_team_abbr(team.get("abbreviation", "")),
+        "name": team.get("displayName") or team.get("name") or team.get("abbreviation", ""),
+        "logo": team.get("logo", ""),
+        "score": int(score) if str(score).isdigit() else None,
+        "record": record,
+        "winner": bool(competitor.get("winner", False)),
+    }
+
+
+def normalize_scoreboard_event(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Normalize one raw ESPN scoreboard event into the shape the Schedule &
+    Scores page renders. Returns None for a malformed event (missing
+    competitors) rather than fabricating placeholder teams."""
+    competitions = event.get("competitions") or []
+    if not competitions:
+        return None
+    competition = competitions[0]
+    competitors = competition.get("competitors", []) or []
+    away = next((c for c in competitors if c.get("homeAway") == "away"), None)
+    home = next((c for c in competitors if c.get("homeAway") == "home"), None)
+    if not away or not home:
+        return None
+
+    status = event.get("status") or competition.get("status") or {}
+    status_type = status.get("type", {}) or {}
+    state = status_type.get("state", "pre")
+    if state not in ("pre", "in", "post"):
+        state = "pre"
+
+    return {
+        "id": str(event.get("id", "")),
+        "date": event.get("date", ""),
+        "matchup": event.get("shortName") or event.get("name", ""),
+        "status": state,
+        "status_detail": status_type.get("shortDetail") or status_type.get("detail") or "Scheduled",
+        "away": _scoreboard_team(away),
+        "home": _scoreboard_team(home),
     }
 
 
