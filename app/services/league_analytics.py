@@ -97,6 +97,13 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Shot chart. Every comparable NBA analytics site (NBA.com Stats, Basketball-Reference,
+# Cleaning the Glass) puts a spatial shot chart on the player page - this dashboard had
+# zero spatial visualization (only 1-D line charts). Cap the raw shots returned so a
+# high-volume career/season pull stays a reasonable payload; the per-zone summary below
+# is still computed from the full set, not the capped slice.
+_SHOT_CHART_MAX_SHOTS = 700
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -518,6 +525,90 @@ class LeagueAnalyticsService:
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
         )
+
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Per-shot court locations plus per-zone FG% vs. league average, playoffs
+        first with a regular-season fallback - same off-season gap handling as
+        `player_game_log` above. Every comparable NBA analytics site (NBA.com
+        Stats, Basketball-Reference, Cleaning the Glass) leads a player page with
+        a shot chart; this was the one spatial view this dashboard didn't have."""
+        season_type = "Playoffs"
+        shot_frame, league_frame = self._shot_chart_frames(player_id, season, season_type)
+        if shot_frame.empty:
+            season_type = "Regular Season"
+            shot_frame, league_frame = self._shot_chart_frames(player_id, season, season_type)
+        if shot_frame.empty:
+            return {"season_type": season_type, "shots": [], "zones": []}
+
+        league_averages: dict[str, float] = {}
+        if not league_frame.empty:
+            for row in league_frame.to_dict("records"):
+                zone = str(row.get("SHOT_ZONE_BASIC", "") or "")
+                if zone:
+                    league_averages[zone] = _safe_float(row.get("FG_PCT"))
+
+        all_shots = []
+        for item in shot_frame.to_dict("records"):
+            shot_type = str(item.get("SHOT_TYPE", "") or "")
+            all_shots.append(
+                {
+                    "x": _safe_float(item.get("LOC_X")),
+                    "y": _safe_float(item.get("LOC_Y")),
+                    "made": str(item.get("SHOT_MADE_FLAG", "0")) == "1",
+                    "zone": str(item.get("SHOT_ZONE_BASIC", "") or "Unknown"),
+                    "distance": _safe_float(item.get("SHOT_DISTANCE")),
+                    "three": "3PT" in shot_type,
+                }
+            )
+
+        return {
+            "season_type": season_type,
+            "shots": all_shots[:_SHOT_CHART_MAX_SHOTS],
+            "zones": summarize_shot_zones(all_shots, league_averages),
+        }
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Raw per-shot detail + per-zone league-average frames for one player/
+        season/season-type, in a single request (`shotchartdetail` returns both
+        result sets together). Same underlying NBA Stats endpoint `nba_api`'s
+        `stats.endpoints.shotchartdetail.ShotChartDetail` wraps - called directly
+        here (like every other frame in this file) instead of via the nba_api
+        Endpoint class, to keep this file's one HTTP path/timeout/retry policy."""
+        params = {
+            "PlayerID": player_id,
+            "TeamID": 0,
+            "GameID": "",
+            "ContextMeasure": "FGA",
+            "Season": season,
+            "SeasonType": season_type,
+            "LeagueID": "00",
+            "PerMode": "PerGame",
+            "Month": "0",
+            "OpponentTeamID": "0",
+            "Period": "0",
+            "LastNGames": "0",
+        }
+        try:
+            response = requests.get(
+                "https://stats.nba.com/stats/shotchartdetail",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_sets = response.json().get("resultSets", [])
+        except Exception:
+            result_sets = []
+
+        def _frame(name: str) -> pd.DataFrame:
+            selected = next((item for item in result_sets if item.get("name") == name), None)
+            if not selected:
+                return pd.DataFrame()
+            return pd.DataFrame(selected.get("rowSet", []), columns=selected.get("headers", []))
+
+        return _frame("Shot_Chart_Detail"), _frame("LeagueAverages")
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
@@ -1464,6 +1555,58 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def summarize_shot_zones(shots: list[dict[str, Any]], league_averages: dict[str, float]) -> list[dict[str, Any]]:
+    """Per-zone FGM/FGA/FG% vs. league average from a flat list of raw shots.
+
+    Pure function (no I/O, no DataFrame) so it's trivially unit-testable without
+    nba_api/network - see scripts/test_shot_chart.py. `shots` are dicts with at
+    least `zone` and `made`; `league_averages` maps SHOT_ZONE_BASIC -> league
+    FG_PCT as a 0-1 fraction, exactly as ShotChartDetail's LeagueAverages result
+    set reports it. A zone present in `league_averages` but never attempted by
+    the player is still included, with fga=0 and fg_pct=0.0 (no division by zero).
+    """
+    totals: dict[str, dict[str, int]] = {}
+    order: list[str] = []
+    for shot in shots:
+        zone = str(shot.get("zone") or "Unknown")
+        if zone not in totals:
+            totals[zone] = {"fgm": 0, "fga": 0}
+            order.append(zone)
+        totals[zone]["fga"] += 1
+        if shot.get("made"):
+            totals[zone]["fgm"] += 1
+
+    for zone in league_averages:
+        if zone not in totals:
+            totals[zone] = {"fgm": 0, "fga": 0}
+            order.append(zone)
+
+    rows = []
+    for zone in order:
+        fgm = totals[zone]["fgm"]
+        fga = totals[zone]["fga"]
+        fg_pct = (fgm / fga) if fga else 0.0
+        league_pct = _safe_float(league_averages.get(zone, 0.0))
+        rows.append(
+            {
+                "zone": zone,
+                "fgm": fgm,
+                "fga": fga,
+                "fg_pct": round(fg_pct * 100, 1),
+                "league_fg_pct": round(league_pct * 100, 1),
+                "diff": round((fg_pct - league_pct) * 100, 1),
+            }
+        )
+    return rows
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:

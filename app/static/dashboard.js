@@ -11,6 +11,8 @@ const state = {
   news: {},
   compare: { a: null, b: null },
   gameLog: {},
+  shotChart: {},
+  shotChartFilter: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -731,6 +733,128 @@ function loadGameLog(playerId) {
     });
 }
 
+const SHOT_FILTERS = [
+  ["all", "All"],
+  ["2", "2PT"],
+  ["3", "3PT"],
+  ["made", "Made Only"],
+];
+
+function filterShots(shots, filter) {
+  if (filter === "2") return shots.filter((shot) => !shot.three);
+  if (filter === "3") return shots.filter((shot) => shot.three);
+  if (filter === "made") return shots.filter((shot) => shot.made);
+  return shots;
+}
+
+function shotFilterChips(playerId, active) {
+  return `
+    <div class="shot-filter-chips">
+      ${SHOT_FILTERS.map(([value, label]) => `
+        <button type="button" class="chip ${active === value ? "active" : ""}" data-shot-filter="${value}" data-shot-filter-player="${playerId}">${label}</button>
+      `).join("")}
+    </div>
+  `;
+}
+
+function shotMarkers(shots) {
+  return shots.map((shot) => {
+    const cx = (Number(shot.x) + 250).toFixed(1);
+    const cy = (420 - Number(shot.y)).toFixed(1);
+    const label = `${shot.made ? "Made" : "Missed"} ${shot.three ? "3PT" : "2PT"} - ${shot.distance}ft (${html(shot.zone || "")})`;
+    return `<circle class="shot-dot ${shot.made ? "shot-made" : "shot-missed"}" cx="${cx}" cy="${cy}" r="4.2"><title>${label}</title></circle>`;
+  }).join("");
+}
+
+function courtSvg(shots) {
+  return `
+    <svg class="shot-court" viewBox="0 0 500 470" role="img" aria-label="Half-court shot chart">
+      <rect class="court-boundary" x="2" y="2" width="496" height="466" rx="6" />
+      <circle class="court-line" cx="250" cy="277.5" r="60" />
+      <rect class="court-line" x="170" y="277.5" width="160" height="190" />
+      <rect class="court-line" x="190" y="277.5" width="120" height="190" />
+      <path class="court-line" d="M210,420 A40,40 0 0,0 290,420" />
+      <line class="court-line" x1="30" y1="467.5" x2="30" y2="330.5" />
+      <line class="court-line" x1="470" y1="467.5" x2="470" y2="330.5" />
+      <path class="court-line" d="M30,330.5 A237.5,237.5 0 0,1 470,330.5" />
+      <line class="court-line" x1="220" y1="427.5" x2="280" y2="427.5" />
+      <circle class="court-hoop" cx="250" cy="420" r="7.5" />
+      <g class="shot-layer">${shotMarkers(shots)}</g>
+    </svg>
+  `;
+}
+
+function zoneTable(zones) {
+  if (!zones || !zones.length) return "";
+  return `
+    <div class="table-wrap">
+      <table class="zone-table">
+        <thead><tr><th>Zone</th><th>FGM</th><th>FGA</th><th>FG%</th><th>LG FG%</th><th>+/-</th></tr></thead>
+        <tbody>${zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.fgm}</td>
+            <td>${zone.fga}</td>
+            <td>${zone.fg_pct}%</td>
+            <td>${zone.league_fg_pct}%</td>
+            <td class="${zone.diff >= 0 ? "positive" : "concern"}">${zone.diff > 0 ? "+" : ""}${zone.diff}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function shotChartPanel(playerId) {
+  return `
+    <article class="profile-panel">
+      <div class="panel-heading"><h2>Shot Chart <span>(vs. League Average by Zone)</span></h2></div>
+      <div id="shot-chart-${playerId}">${renderShotChartContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderShotChartContent(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const shots = entry.shots || [];
+  if (!shots.length) return `<p class="footer-note">No shot chart data found for this player.</p>`;
+  const filter = state.shotChartFilter[playerId] || "all";
+  const filtered = filterShots(shots, filter);
+  return `
+    <div class="shot-chart-meta">
+      <span>${html(entry.season_type || "Season")}</span>
+      <span>${filtered.length} of ${shots.length} shots shown</span>
+    </div>
+    ${shotFilterChips(playerId, filter)}
+    <div class="shot-court-wrap">${courtSvg(filtered)}</div>
+    ${zoneTable(entry.zones)}
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = {
+        loading: false,
+        error: false,
+        shots: data.shots || [],
+        zones: data.zones || [],
+        season_type: data.season_type || "",
+      };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    });
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -842,10 +966,12 @@ function renderPlayerDetail(slug) {
       </aside>
     </section>
     ${gameLogPanel(player.id)}
+    ${shotChartPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
   if (!state.gameLog[player.id]) loadGameLog(player.id);
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
 }
 
 function renderAlertsPage() {
@@ -1373,6 +1499,15 @@ document.addEventListener("click", (event) => {
       terms,
       refresh: true,
     });
+    return;
+  }
+
+  const shotFilterButton = event.target.closest("[data-shot-filter]");
+  if (shotFilterButton) {
+    const playerId = shotFilterButton.dataset.shotFilterPlayer;
+    state.shotChartFilter[playerId] = shotFilterButton.dataset.shotFilter;
+    const target = document.getElementById(`shot-chart-${playerId}`);
+    if (target) target.innerHTML = renderShotChartContent(playerId);
   }
 });
 

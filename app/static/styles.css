@@ -1047,6 +1047,102 @@ td {
   grid-column: 1 / -1;
 }
 
+.shot-chart-meta {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 10px;
+}
+
+.shot-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.chip {
+  min-height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.chip:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.chip.active {
+  color: #ffffff;
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.shot-court-wrap {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+  padding: 10px;
+  margin-bottom: 16px;
+}
+
+.shot-court {
+  width: 100%;
+  height: auto;
+  display: block;
+  max-height: 520px;
+}
+
+.court-boundary {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--subtle);
+  stroke-width: 1.5;
+}
+
+.court-hoop {
+  fill: none;
+  stroke: var(--orange);
+  stroke-width: 2.5;
+}
+
+.shot-dot {
+  stroke: var(--surface);
+  stroke-width: 0.6;
+  opacity: 0.9;
+}
+
+.shot-dot.shot-made {
+  fill: var(--green);
+}
+
+.shot-dot.shot-missed {
+  fill: var(--red);
+}
+
+.zone-table td:last-child,
+.zone-table th:last-child {
+  text-align: right;
+}
+
 .event-list {
   display: grid;
   gap: 10px;
