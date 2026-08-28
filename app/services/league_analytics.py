@@ -227,6 +227,7 @@ class LeagueAnalyticsService:
                 "NBA Stats API scoreboardv3",
                 "NBA Stats API leaguedashplayerstats",
                 "NBA Stats API leaguedashteamstats",
+                "NBA Stats API leaguestandingsv3",
                 "ESPN public scoreboard/news API",
                 "Yahoo Sports NBA RSS",
                 "CBS Sports NBA RSS",
@@ -251,6 +252,7 @@ class LeagueAnalyticsService:
 
         advanced_by_id = self._advanced_team_stats(season)
         clutch_by_id = self._clutch_team_stats(season)
+        standings_by_id = self._league_standings_frame(season)
 
         rows = []
         for team in PLAYOFF_SEEDS_2026:
@@ -267,14 +269,30 @@ class LeagueAnalyticsService:
             fallback_clutch = clutch_fallback(plus_minus)
             fga = float(stats.get("FGA", 0))
             ftr = round(float(stats.get("FTA", 0)) / fga * 100, 1) if fga else fallback_adv["ftr"]
+
+            # `leaguestandingsv3` real record/L10/streak/games-back for this team, when
+            # reachable - replaces the `simulated_last10`/`streak_from_net` stand-ins
+            # (kept below as the fallback expression, unchanged, when unreachable).
+            standings_row = standings_by_id.get(int(team["team_id"]))
+            real_wins = _coerce_int(standings_row.get("WINS")) if standings_row else 0
+            real_losses = _coerce_int(standings_row.get("LOSSES")) if standings_row else 0
+            row_wins = real_wins if (real_wins or real_losses) else wins
+            row_losses = real_losses if (real_wins or real_losses) else losses
+            real_l10 = str(standings_row.get("L10") or "").strip() if standings_row else ""
+            real_gb = standings_row.get("ConferenceGamesBack") if standings_row else None
             rows.append(
                 {
                     **team,
                     "slug": slugify(team["team"]),
                     "logo": team_logo_url(int(team["team_id"])),
-                    "record": f"{wins}-{losses}",
-                    "pct": round(wins / max(wins + losses, 1), 3),
-                    "gb": games_back(team, PLAYOFF_SEEDS_2026),
+                    "record": f"{row_wins}-{row_losses}",
+                    "pct": round(row_wins / max(row_wins + row_losses, 1), 3),
+                    "gb": format_games_back(real_gb) if real_gb not in (None, "") else games_back(team, PLAYOFF_SEEDS_2026),
+                    "conf_record": str(standings_row.get("ConferenceRecord")) if standings_row and standings_row.get("ConferenceRecord") not in (None, "") else "-",
+                    "home_record": str(standings_row.get("HOME")) if standings_row and standings_row.get("HOME") not in (None, "") else "-",
+                    "road_record": str(standings_row.get("ROAD")) if standings_row and standings_row.get("ROAD") not in (None, "") else "-",
+                    "division": str(standings_row.get("Division")) if standings_row and standings_row.get("Division") not in (None, "") else "",
+                    "diff_pg": round(_coerce_float(standings_row.get("DiffPointsPG")), 1) if standings_row and standings_row.get("DiffPointsPG") not in (None, "") else None,
                     "playoff_record": f"{playoff_wins}-{playoff_losses}" if stats else "0-0",
                     "pts": round(float(stats.get("PTS", seed_points(team["seed"]))), 1),
                     "reb": round(float(stats.get("REB", 42.0 - team["seed"] * 0.2)), 1),
@@ -294,8 +312,8 @@ class LeagueAnalyticsService:
                     "ftr": ftr,
                     "clutch_record": f"{int(clutch['W'])}-{int(clutch['L'])}" if clutch else fallback_clutch["clutch_record"],
                     "clutch_net": round(float(clutch["PLUS_MINUS"]), 1) if clutch else fallback_clutch["clutch_net"],
-                    "last10": simulated_last10(playoff_wins, playoff_losses),
-                    "streak": streak_from_net(plus_minus),
+                    "last10": real_l10 if real_l10 else simulated_last10(playoff_wins, playoff_losses),
+                    "streak": standings_streak_label(standings_row.get("CurrentStreak"), standings_row.get("strCurrentStreak", "")) if standings_row else streak_from_net(plus_minus),
                     "sentiment": sentiment,
                 }
             )
@@ -337,6 +355,55 @@ class LeagueAnalyticsService:
             if column in frame:
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
+
+    @lru_cache(maxsize=4)
+    def _league_standings_frame(self, season: str) -> dict[int, dict[str, Any]]:
+        """Raw `leaguestandingsv3` rows (all 30 teams) keyed by team id, one call.
+
+        This single endpoint carries wins/losses/PCT/L10/streak/games-back/
+        conference-record/playoff-rank for the whole league - it's both the
+        source for the new all-30-team `/api/standings` endpoint and, for the
+        16 tracked playoff teams, the real `last10`/`streak` values that
+        `playoff_teams()` used to fabricate via `simulated_last10`/`streak_from_net`.
+        """
+        frame = self._stats_frame(
+            "leaguestandingsv3",
+            {"LeagueID": "00", "Season": season, "SeasonType": "Regular Season"},
+            "Standings",
+        )
+        if frame.empty or "TeamID" not in frame:
+            return {}
+        rows: dict[int, dict[str, Any]] = {}
+        for record in frame.to_dict("records"):
+            try:
+                team_id = int(record.get("TeamID"))
+            except (TypeError, ValueError):
+                continue
+            rows[team_id] = record
+        return rows
+
+    def league_standings(self, season: str) -> dict[str, Any]:
+        """Full-league (all 30 teams) regular-season standings, split east/west.
+
+        Powers `/api/standings`. Falls back to the existing 16-team
+        `PLAYOFF_SEEDS_2026` fallback data (`fallback_standings()`) when the
+        NBA Stats API is unreachable, mirroring `fallback_playoff_table()`.
+        """
+        standings_by_id = self._league_standings_frame(season)
+        if standings_by_id:
+            grouped = normalize_standings_rows(list(standings_by_id.values()))
+            source = "nba_stats"
+        else:
+            grouped = fallback_standings()
+            source = "fallback"
+        return {
+            "season": season,
+            "source": source,
+            "team_count": len(grouped["east"]) + len(grouped["west"]),
+            "east": grouped["east"],
+            "west": grouped["west"],
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+        }
 
     def power_rankings(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """League-wide power ranking across all 16 tracked playoff teams.
@@ -1532,6 +1599,232 @@ def streak_from_net(net: float) -> str:
     if net <= -8:
         return "L4"
     return "L1"
+
+
+@lru_cache(maxsize=1)
+def all_team_meta() -> dict[int, dict[str, Any]]:
+    """Team id -> {abbr, team, slug, logo} for all 30 NBA franchises.
+
+    `nba_api.stats.static.teams.get_teams()` is a bundled offline list (no
+    network call) - used here instead of the 16-team `TEAM_BY_ID` so the
+    full-league standings endpoint isn't limited to the tracked playoff seeds.
+    Falls back to `TEAM_BY_ID` if the import/call ever fails.
+    """
+    try:
+        from nba_api.stats.static import teams as nba_static_teams
+
+        meta = {}
+        for entry in nba_static_teams.get_teams():
+            team_id = int(entry["id"])
+            full_name = str(entry["full_name"])
+            meta[team_id] = {
+                "abbr": entry["abbreviation"],
+                "team": full_name,
+                "slug": slugify(full_name),
+                "logo": team_logo_url(team_id),
+            }
+        if meta:
+            return meta
+    except Exception:
+        pass
+    return {
+        team_id: {
+            "abbr": team["abbr"],
+            "team": team["team"],
+            "slug": slugify(team["team"]),
+            "logo": team_logo_url(team_id),
+        }
+        for team_id, team in TEAM_BY_ID.items()
+    }
+
+
+def standings_streak_label(current_streak: Any, str_current_streak: str = "") -> str:
+    """`3 -> "W3"`, `-2 -> "L2"`; falls back to parsing `strCurrentStreak`
+    (e.g. `"W 3" -> "W3"`) when `current_streak` isn't a usable nonzero int,
+    then to `"-"`. Must never raise regardless of input type."""
+    try:
+        streak = int(current_streak)
+        if streak > 0:
+            return f"W{streak}"
+        if streak < 0:
+            return f"L{abs(streak)}"
+    except (TypeError, ValueError):
+        pass
+    try:
+        text = str(str_current_streak or "").strip().upper().replace(" ", "")
+        if len(text) >= 2 and text[0] in ("W", "L") and text[1:].isdigit():
+            return text
+    except Exception:
+        pass
+    return "-"
+
+
+def standings_playoff_status(playoff_rank: Any, clinched_playoff_birth: Any, eliminated_conference: Any) -> str:
+    """`"Eliminated"` / `"Clinched"` / rank-based playoff-field label.
+
+    Tolerant of None/string/int flag values (NBA Stats sends these as 'Y'/'N'
+    or 1/0 depending on the season) and of a missing/garbage rank - never raises.
+    """
+
+    def _truthy(value: Any) -> bool:
+        if isinstance(value, str):
+            return value.strip().upper() in {"1", "Y", "YES", "TRUE"}
+        try:
+            return bool(int(value))
+        except (TypeError, ValueError):
+            return bool(value)
+
+    if _truthy(eliminated_conference):
+        return "Eliminated"
+    if _truthy(clinched_playoff_birth):
+        return "Clinched"
+    try:
+        rank = int(float(playoff_rank))
+    except (TypeError, ValueError):
+        return ""
+    if 1 <= rank <= 6:
+        return "Playoff spot"
+    if 7 <= rank <= 10:
+        return "Play-In"
+    if 11 <= rank <= 15:
+        return "Out"
+    return ""
+
+
+def format_games_back(value: Any) -> str:
+    """`<= 0` or unparseable -> `"-"`, else one-decimal string (e.g. `"4.0"`)."""
+    try:
+        gb = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    return "-" if gb <= 0 else f"{gb:.1f}"
+
+
+def _coerce_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _normalize_conference(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text.startswith("east") or text == "e":
+        return "East"
+    if text.startswith("west") or text == "w":
+        return "West"
+    return ""
+
+
+def normalize_standings_rows(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    """Turn `leaguestandingsv3` "Standings" rows (`frame.to_dict("records")`
+    shape) into `{"east": [...], "west": [...]}`, sorted by playoff rank
+    (tie-break: win pct descending). Rows with an unrecognized `TeamID` are
+    dropped; every other field is coerced defensively so a single malformed
+    row never raises."""
+    team_meta = all_team_meta()
+    east: list[dict[str, Any]] = []
+    west: list[dict[str, Any]] = []
+    for record in records:
+        try:
+            team_id = int(record.get("TeamID"))
+        except (TypeError, ValueError):
+            continue
+        meta = team_meta.get(team_id)
+        if not meta:
+            continue
+        conference = _normalize_conference(record.get("Conference")) or "East"
+        wins = _coerce_int(record.get("WINS"))
+        losses = _coerce_int(record.get("LOSSES"))
+        default_pct = wins / max(wins + losses, 1)
+        pct = _coerce_float(record.get("WinPCT"), default_pct)
+        rank = _coerce_int(record.get("PlayoffRank"))
+        status = standings_playoff_status(rank, record.get("ClinchedPlayoffBirth"), record.get("EliminatedConference"))
+        raw_l10 = record.get("L10")
+        row = {
+            "team_id": team_id,
+            "abbr": meta["abbr"],
+            "team": meta["team"],
+            "slug": meta["slug"],
+            "logo": meta["logo"],
+            "conference": conference,
+            "division": str(record.get("Division") or ""),
+            "rank": rank,
+            "division_rank": _coerce_int(record.get("DivisionRank")),
+            "wins": wins,
+            "losses": losses,
+            "record": str(record.get("Record") or f"{wins}-{losses}"),
+            "pct": round(pct, 3),
+            "gb": format_games_back(record.get("ConferenceGamesBack")),
+            "conf_record": str(record.get("ConferenceRecord") or "-"),
+            "home": str(record.get("HOME") or "-"),
+            "road": str(record.get("ROAD") or "-"),
+            "last10": str(raw_l10).strip() if raw_l10 not in (None, "", "None") else "-",
+            "streak": standings_streak_label(record.get("CurrentStreak"), record.get("strCurrentStreak", "")),
+            "pts_pg": round(_coerce_float(record.get("PointsPG")), 1),
+            "opp_pts_pg": round(_coerce_float(record.get("OppPointsPG")), 1),
+            "diff_pg": round(_coerce_float(record.get("DiffPointsPG")), 1),
+            "playoff_status": status,
+            "in_playoff_field": status in ("Clinched", "Playoff spot"),
+        }
+        (east if conference == "East" else west).append(row)
+    for bucket in (east, west):
+        bucket.sort(key=lambda row: (row["rank"] if row["rank"] > 0 else 999, -row["pct"]))
+    return {"east": east, "west": west}
+
+
+def fallback_standings() -> dict[str, list[dict[str, Any]]]:
+    """All-30-team standings shape built only from the existing 16-team
+    `PLAYOFF_SEEDS_2026` fallback data, used when NBA Stats is unreachable.
+    Mirrors `fallback_playoff_table()` - does not invent data for the other
+    14 franchises, and reuses `simulated_last10`/`streak_from_net` for the
+    same fields `playoff_teams()` falls back to."""
+    east: list[dict[str, Any]] = []
+    west: list[dict[str, Any]] = []
+    for team in PLAYOFF_SEEDS_2026:
+        wins = int(team["wins"])
+        losses = int(team["losses"])
+        net = seed_net_rating(team["seed"])
+        conference = "East" if team["conference"] == "Eastern" else "West"
+        rank = int(team["seed"])
+        status = "Playoff spot" if rank <= 6 else "Play-In"
+        row = {
+            "team_id": team["team_id"],
+            "abbr": team["abbr"],
+            "team": team["team"],
+            "slug": slugify(team["team"]),
+            "logo": team_logo_url(team["team_id"]),
+            "conference": conference,
+            "division": "",
+            "rank": rank,
+            "division_rank": rank,
+            "wins": wins,
+            "losses": losses,
+            "record": f"{wins}-{losses}",
+            "pct": round(wins / max(wins + losses, 1), 3),
+            "gb": games_back(team, PLAYOFF_SEEDS_2026),
+            "conf_record": "-",
+            "home": "-",
+            "road": "-",
+            "last10": simulated_last10(wins, losses),
+            "streak": streak_from_net(net),
+            "pts_pg": round(seed_points(rank), 1),
+            "opp_pts_pg": round(seed_points(rank) - net, 1),
+            "diff_pg": net,
+            "playoff_status": status,
+            "in_playoff_field": True,
+        }
+        (east if conference == "East" else west).append(row)
+    for bucket in (east, west):
+        bucket.sort(key=lambda row: row["rank"])
+    return {"east": east, "west": west}
 
 
 def power_ranking_blurb(team: dict[str, Any], form_pct: float, movement: int) -> str:
