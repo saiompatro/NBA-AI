@@ -11,6 +11,7 @@ const state = {
   news: {},
   compare: { a: null, b: null },
   gameLog: {},
+  matchups: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -45,6 +46,7 @@ const els = {
   playerDetailPage: document.getElementById("playerDetailPage"),
   alertsPage: document.getElementById("alertsPage"),
   predictionsPage: document.getElementById("predictionsPage"),
+  matchupPage: document.getElementById("matchupPage"),
   comparePage: document.getElementById("comparePage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
   bracketPage: document.getElementById("bracketPage"),
@@ -167,6 +169,12 @@ function route() {
     setActivePage("predictionsPage", "predictions");
     return;
   }
+  if (section === "matchup" && slug) {
+    const [matchupAway, matchupHome] = slug.split("-");
+    renderMatchupPage(matchupAway, matchupHome);
+    setActivePage("matchupPage", "predictions");
+    return;
+  }
   if (section === "compare") {
     renderComparePage();
     setActivePage("comparePage", "compare");
@@ -274,8 +282,6 @@ function renderUpcomingGames() {
   els.upcomingList.innerHTML = games.slice(0, 5).map((game) => {
     const away = teams[game.away] || {};
     const home = teams[game.home] || {};
-    const pickTeam = Number(home.net || 0) >= Number(away.net || 0) ? home : away;
-    const confidence = Math.min(78, Math.max(56, 61 + Math.abs(Number(home.net || 0) - Number(away.net || 0))));
     return `
       <div class="game-row">
         <time>${formatTime(game.date)}</time>
@@ -289,7 +295,7 @@ function renderUpcomingGames() {
             <strong>${html(home.team || game.home || "Home")}</strong><span>${game.home}</span>
           </a>
         </div>
-        <div class="game-pick">${pickTeam.abbr || "TBD"}<br />${confidence.toFixed(0)}%</div>
+        <a class="game-pick" href="#/matchup/${game.away}-${game.home}">Preview</a>
       </div>
     `;
   }).join("");
@@ -921,13 +927,224 @@ function renderPredictionsPage() {
           <div class="prediction-card">
             <div class="prediction-card-top">
               <span><strong>${html(game.matchup)}</strong><br /><small>${formatDate(game.date)} at ${formatTime(game.date)} - ${html(game.status || "Scheduled")}</small></span>
-              <button class="action-button" type="button" data-run-prediction data-prediction-key="${html(key)}" data-away="${html(game.away)}" data-home="${html(game.home)}">${result?.loading ? "Running..." : "Run Model"}</button>
+              <div class="prediction-card-actions">
+                <button class="action-button" type="button" data-run-prediction data-prediction-key="${html(key)}" data-away="${html(game.away)}" data-home="${html(game.home)}">${result?.loading ? "Running..." : "Run Model"}</button>
+                <a class="action-button small" href="#/matchup/${html(game.away)}-${html(game.home)}">Full Preview</a>
+              </div>
             </div>
             ${renderPredictionResult(game, result)}
           </div>
         `;
       }).join("")}
     </div>
+  `;
+}
+
+function matchupKey(away, home) {
+  return `${away}-${home}`;
+}
+
+function loadMatchup(away, home) {
+  const key = matchupKey(away, home);
+  state.matchups[key] = { loading: true };
+  const params = new URLSearchParams({ away, home });
+  fetch(`/api/game-prediction?${params.toString()}`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.matchups[key] = data;
+      renderMatchupPage(away, home);
+    })
+    .catch(() => {
+      state.matchups[key] = { ok: false, message: "The model could not run right now." };
+      renderMatchupPage(away, home);
+    });
+}
+
+function parseLeadingNumber(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  const match = String(value ?? "").match(/-?\d+(\.\d+)?/);
+  return match ? Number(match[0]) : null;
+}
+
+function compareFactorValues(label, awayVal, homeVal) {
+  if (label === "Four factors") return null;
+  const lowerIsBetter = label === "Availability";
+  const a = parseLeadingNumber(awayVal);
+  const h = parseLeadingNumber(homeVal);
+  if (a === null || h === null || a === h) return null;
+  const awayBetter = lowerIsBetter ? a < h : a > h;
+  return awayBetter ? "away" : "home";
+}
+
+function matchupFourFactorRow(label, key, suffix, away, home) {
+  const a = away?.[key];
+  const h = home?.[key];
+  const aText = typeof a === "number" ? `${a.toFixed(1)}${suffix}` : "N/A";
+  const hText = typeof h === "number" ? `${h.toFixed(1)}${suffix}` : "N/A";
+  const lowerIsBetter = key === "tov_pct";
+  let winSide = null;
+  if (typeof a === "number" && typeof h === "number" && a !== h) {
+    winSide = (lowerIsBetter ? a < h : a > h) ? "away" : "home";
+  }
+  return `
+    <tr>
+      <td class="${winSide === "away" ? "compare-win" : ""}">${aText}</td>
+      <td>${html(label)}</td>
+      <td class="${winSide === "home" ? "compare-win" : ""}">${hText}</td>
+    </tr>
+  `;
+}
+
+function renderMatchupPage(away, home) {
+  const key = matchupKey(away, home);
+  if (!state.matchups[key]) {
+    loadMatchup(away, home);
+  }
+  const result = state.matchups[key];
+  const teams = teamMap();
+  const awayTeam = teams[away] || {};
+  const homeTeam = teams[home] || {};
+  const heading = `
+    <div class="page-heading">
+      <div><h1>${html(away)} @ ${html(home)}</h1><p>Full matchup preview, powered by the same pre-game model behind the Predictions page.</p></div>
+    </div>
+  `;
+
+  if (!result || result.loading) {
+    els.matchupPage.innerHTML = `${heading}<article class="panel"><p class="footer-note">Running the matchup model...</p></article>`;
+    return;
+  }
+  if (!result.ok) {
+    els.matchupPage.innerHTML = `${heading}<article class="panel"><p class="footer-note">${html(result.message || "Prediction unavailable for this matchup.")}</p></article>`;
+    return;
+  }
+
+  const awayPct = Math.round(Number(result.away_probability || 0) * 100);
+  const homePct = Math.round(Number(result.home_probability || 0) * 100);
+  const winnerIsHome = result.winner === result.home;
+  const projectedMargin = Number(result.expected_margin?.winner || 0);
+
+  const awayIsWinner = result.winner === result.away;
+  const factorRows = (result.factors || []).map((factor) => {
+    const awayVal = awayIsWinner ? factor.winner : factor.opponent;
+    const homeVal = awayIsWinner ? factor.opponent : factor.winner;
+    const winSide = compareFactorValues(factor.label, awayVal, homeVal);
+    return `
+      <tr>
+        <td class="${winSide === "away" ? "compare-win" : ""}">${html(awayVal)}</td>
+        <td>${html(factor.label)}</td>
+        <td class="${winSide === "home" ? "compare-win" : ""}">${html(homeVal)}</td>
+      </tr>
+    `;
+  }).join("");
+
+  const ledgerItems = [
+    { label: "Home-court advantage", edge: result.calibration?.home_court_advantage },
+    { label: "Rest / schedule fatigue", edge: result.rest?.margin_edge },
+    { label: "Recent form (last 10)", edge: result.form?.margin_edge },
+    { label: "Home/road performance split", edge: result.home_road_split?.margin_edge },
+    { label: "Four factors (eFG/TOV/OREB/FTr)", edge: result.four_factors?.margin_edge },
+    {
+      label: "Availability / injuries",
+      edge: Number(result.injuries?.away?.points_lost || 0) - Number(result.injuries?.home?.points_lost || 0),
+    },
+  ];
+  const ledgerRows = ledgerItems.map((item) => {
+    const edge = Number(item.edge || 0);
+    const favors = edge > 0.05 ? home : edge < -0.05 ? away : "Even";
+    const favorsWinner = Math.abs(edge) <= 0.05 ? null : (edge > 0) === winnerIsHome;
+    const pillClass = favorsWinner === null ? "neutral" : favorsWinner ? "positive" : "concern";
+    return `
+      <div class="matchup-edge">
+        <span>${html(item.label)}</span>
+        <span class="sentiment-pill ${pillClass}">${edge >= 0 ? "+" : ""}${edge.toFixed(1)} pts &rarr; ${html(favors)}</span>
+      </div>
+    `;
+  }).join("");
+
+  const awayOut = result.injuries?.away?.players_out || [];
+  const homeOut = result.injuries?.home?.players_out || [];
+  const injuryContent = awayOut.length || homeOut.length
+    ? `
+      <div class="matchup-grid">
+        <div>
+          <h4>${html(away)} out</h4>
+          ${awayOut.length ? `<ul>${awayOut.map((player) => `<li>${html(player)}</li>`).join("")}</ul>` : `<p class="footer-note">No players out.</p>`}
+        </div>
+        <div>
+          <h4>${html(home)} out</h4>
+          ${homeOut.length ? `<ul>${homeOut.map((player) => `<li>${html(player)}</li>`).join("")}</ul>` : `<p class="footer-note">No players out.</p>`}
+        </div>
+      </div>
+    `
+    : `<p class="footer-note">No injury news flagged for either side.</p>`;
+
+  const fourFactors = result.four_factors || {};
+  const fourFactorsTable = `
+    <table class="compare-table">
+      <thead><tr><th>${html(away)}</th><th></th><th>${html(home)}</th></tr></thead>
+      <tbody>
+        ${matchupFourFactorRow("eFG%", "efg_pct", "%", fourFactors.away, fourFactors.home)}
+        ${matchupFourFactorRow("TOV%", "tov_pct", "%", fourFactors.away, fourFactors.home)}
+        ${matchupFourFactorRow("OREB%", "oreb_pct", "%", fourFactors.away, fourFactors.home)}
+        ${matchupFourFactorRow("FT Rate", "ftr", "%", fourFactors.away, fourFactors.home)}
+      </tbody>
+    </table>
+  `;
+
+  els.matchupPage.innerHTML = `
+    <div class="page-heading">
+      <div>
+        <h1>${html(away)} @ ${html(home)}</h1>
+        <p>${html(result.winner_name)} (${html(result.winner)}) projected by ${Math.abs(projectedMargin).toFixed(1)} pts - full matchup preview</p>
+      </div>
+      ${result.data_quality === "seed_fallback" ? `<span class="sentiment-pill neutral">Estimated - live stats unavailable</span>` : ""}
+    </div>
+    <section class="panel matchup-hero">
+      <div class="matchup-hero-team">
+        <img class="logo" src="${awayTeam.logo || ""}" alt="" />
+        <div><strong>${html(awayTeam.team || away)}</strong><span>${html(away)}</span></div>
+      </div>
+      <div class="matchup-hero-mid">
+        <span class="matchup-margin">${html(result.winner)} ${projectedMargin >= 0 ? "+" : ""}${projectedMargin.toFixed(1)}</span>
+        <span>Projected margin</span>
+      </div>
+      <div class="matchup-hero-team matchup-hero-team-home">
+        <div><strong>${html(homeTeam.team || home)}</strong><span>${html(home)}</span></div>
+        <img class="logo" src="${homeTeam.logo || ""}" alt="" />
+      </div>
+    </section>
+    <article class="panel">
+      <div class="panel-heading"><h2>Win Probability</h2></div>
+      <div class="probability-row"><span>${html(away)}</span><div><i style="width:${awayPct}%"></i></div><strong>${awayPct}%</strong></div>
+      <div class="probability-row"><span>${html(home)}</span><div><i style="width:${homePct}%"></i></div><strong>${homePct}%</strong></div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><h2>Factor Comparison</h2></div>
+      <div class="table-wrap">
+        <table class="compare-table">
+          <thead><tr><th>${html(away)}</th><th></th><th>${html(home)}</th></tr></thead>
+          <tbody>${factorRows}</tbody>
+        </table>
+      </div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><h2>Margin Ledger</h2><span>Positive edges favor ${html(home)}, negative favor ${html(away)}</span></div>
+      <div class="matchup-edges">${ledgerRows}</div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><h2>Availability</h2></div>
+      ${injuryContent}
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><h2>Four Factors</h2></div>
+      <div class="table-wrap">${fourFactorsTable}</div>
+    </article>
+    <article class="panel">
+      <div class="panel-heading"><h2>Model Summary</h2></div>
+      <p>${html(result.summary)}</p>
+      <p class="footer-note">Calibration: home-court edge ${Number(result.calibration?.home_court_advantage || 0).toFixed(2)} pts, scale ${Number(result.calibration?.scale || 0).toFixed(2)} (${html(result.calibration?.source || "n/a")}). Data quality: ${html(result.data_quality || "n/a")}.</p>
+    </article>
   `;
 }
 
