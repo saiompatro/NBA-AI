@@ -16,7 +16,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Win-probability trend chart** — live line chart of the home team's win probability across the game, capped at the last 1,000 snapshots
 - **Playoff dashboard** — standings, schedule, team form, player leaders, sentiment, and alerts
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
-- **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and shooting-efficiency/turnover (four factors) splits
+- **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, shooting-efficiency/turnover (four factors) splits, and head-to-head matchup history
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering)
 - **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
@@ -27,6 +27,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
 - **Playoff bracket** — series scores grouped by conference and round (First Round / Conf. Semifinals / Conf. Finals / NBA Finals), sourced from the same live `scoreboardv3` series data the standings already computed but the UI never surfaced
 - **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder), plus the shot-quality model's R²/MAE on a synthetic holdout (labeled as such — there's no real-shot ground truth to backtest against)
+- **Matchup history** — real completed-game results between any two playoff teams over the current and prior season (regular season + playoffs), with series record, average margin, and a capped/sample-size-shrunk edge fed into the game-prediction model
 
 ## Tech Stack
 
@@ -111,6 +112,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
 | GET    | `/api/model-performance`                                      | Backtested accuracy/log-loss for the pre-game model |
 | GET    | `/api/game-prediction?away=DET&home=CLE`                      | Matchup prediction with plain-English summary |
+| GET    | `/api/head-to-head?away=DET&home=CLE`                         | Real head-to-head results between two teams   |
 | GET    | `/api/news?type=team&team=DET&term=Detroit+Pistons&refresh=1` | Contextual ESPN news                          |
 | GET    | `/api/shot-quality`                                           | Model metadata and feature importance         |
 | GET    | `/teams/<slug>`                                               | Team profile page                             |
@@ -132,6 +134,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/teams/<slug>`        | Team profile         |
 | `#/predictions`         | Game prediction tool |
 | `#/compare`              | Player comparison    |
+| `#/matchups`             | Head-to-head matchup history |
 | `#/power-rankings`      | Power rankings        |
 | `#/bracket`              | Playoff bracket        |
 | `#/model`               | Model accuracy         |
@@ -152,6 +155,7 @@ This project uses the following **public, unauthenticated** data sources. No API
   - `nba_api.stats.endpoints.leaguedashplayerstats` — season player stats
   - `nba_api.stats.endpoints.leaguedashteamstats` — season team stats
   - `nba_api.stats.endpoints.playoffpicture` — playoff bracket picture
+  - `nba_api.stats.endpoints.leaguegamelog` — real per-game results, used to reconstruct head-to-head matchup history
 - **Data owner:** NBA Stats (`stats.nba.com`) — data is property of the NBA. Use is subject to [NBA Terms of Use](https://www.nba.com/tos).
 
 ### ESPN Public APIs
