@@ -73,6 +73,12 @@ function pct(value) {
   return numeric < 1 ? numeric.toFixed(3).replace(/^0/, "") : numeric.toFixed(1);
 }
 
+function streakInfo(streak) {
+  const value = streak == null ? "" : String(streak);
+  const cls = value.startsWith("W") ? "streak-win" : value.startsWith("L") ? "streak-loss" : "";
+  return { cls, label: value || "-" };
+}
+
 function formatTime(dateValue) {
   if (!dateValue) return "TBD";
   return new Date(dateValue).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -149,7 +155,7 @@ function route() {
   }
   if (section === "standings") {
     renderFullStandings();
-    setActivePage("tablePage", "table");
+    setActivePage("tablePage", "standings");
     return;
   }
   if (section === "live") {
@@ -261,7 +267,7 @@ function renderStandings() {
         <td>${team.losses}</td>
         <td>${pct(team.pct)}</td>
         <td>${team.gb}</td>
-        <td class="${String(team.streak).startsWith("W") ? "streak-win" : "streak-loss"}">${team.streak}</td>
+        <td class="${streakInfo(team.streak).cls}">${team.streak}</td>
       </tr>
     `)
     .join("");
@@ -500,7 +506,7 @@ function renderTeamForm() {
       <td>${team.pts}</td>
       <td>${(team.pts - team.net).toFixed(1)}</td>
       <td class="${team.net >= 0 ? "positive" : "concern"}">${team.net > 0 ? "+" : ""}${team.net}</td>
-      <td class="${String(team.streak).startsWith("W") ? "streak-win" : "streak-loss"}">${team.streak}</td>
+      <td class="${streakInfo(team.streak).cls}">${team.streak}</td>
     </tr>
   `).join("");
 }
@@ -541,18 +547,26 @@ function renderFullStandings() {
         <div class="panel-heading"><h2>${conference} Conference</h2></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>#</th><th>Team</th><th>Record</th><th>Playoffs</th><th>PTS</th><th>NET</th><th>Sentiment</th></tr></thead>
-            <tbody>${rows.map((team) => `
+            <thead><tr><th>#</th><th>Team</th><th>W</th><th>L</th><th>PCT</th><th>GB</th><th>L10</th><th>STRK</th><th>Playoffs</th><th>PTS</th><th>NET</th><th>Sentiment</th></tr></thead>
+            <tbody>${rows.map((team) => {
+              const streak = streakInfo(team.streak);
+              return `
               <tr>
                 <td>${team.seed}</td>
                 <td><a class="team-cell" href="#/teams/${team.slug}"><img class="logo" src="${team.logo}" alt="" />${html(team.team)}</a></td>
-                <td>${team.record}</td>
+                <td>${team.wins}</td>
+                <td>${team.losses}</td>
+                <td>${pct(team.pct)}</td>
+                <td>${team.gb ?? "-"}</td>
+                <td>${team.last10 ?? "-"}</td>
+                <td class="${streak.cls}">${streak.label}</td>
                 <td>${team.playoff_record}</td>
                 <td>${team.pts}</td>
                 <td class="${team.net >= 0 ? "positive" : "concern"}">${team.net > 0 ? "+" : ""}${team.net}</td>
                 <td><span class="sentiment-pill ${team.sentiment.label.toLowerCase()}">${team.sentiment.label}</span></td>
               </tr>
-            `).join("")}</tbody>
+            `;
+            }).join("")}</tbody>
           </table>
         </div>
       </article>
