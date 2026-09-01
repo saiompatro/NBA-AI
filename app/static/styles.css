@@ -1043,6 +1043,32 @@ td {
   stroke: var(--accent);
 }
 
+.shot-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px) 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+.shot-court {
+  width: 100%;
+  max-width: 420px;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+}
+
+.shot-missed {
+  stroke: var(--subtle);
+}
+
 .shot-quality-meter > div {
   grid-column: 1 / -1;
 }
@@ -2071,6 +2097,7 @@ select {
   .mini-panels,
   .sentiment-layout,
   .profile-grid,
+  .shot-chart-layout,
   .live-detector-grid {
     grid-template-columns: 1fr;
   }
