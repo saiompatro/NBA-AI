@@ -327,6 +327,28 @@ a {
   background: currentColor;
 }
 
+.shotchart-icon::before {
+  content: "";
+  position: absolute;
+  inset: 3px 5px 7px;
+  border: 2px solid currentColor;
+  border-bottom: 0;
+  border-radius: 3px 3px 0 0;
+}
+
+.shotchart-icon::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 2px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border: 2px solid currentColor;
+  border-top: 0;
+  border-radius: 0 0 8px 8px;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -692,6 +714,10 @@ a {
 
 .leader-tabs {
   grid-template-columns: repeat(5, 1fr);
+}
+
+.segmented-3 {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .segment,
@@ -1913,6 +1939,73 @@ select {
 
 .compare-table td.compare-win {
   color: var(--green);
+}
+
+.shot-chart-grid {
+  align-items: start;
+}
+
+.shot-chart-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  color: var(--ink-2);
+  font-weight: 700;
+}
+
+.court-svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 500 / 470;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.court-line-dashed {
+  stroke-dasharray: 6 5;
+}
+
+.shot-made {
+  fill: var(--green);
+}
+
+.shot-missed {
+  stroke: var(--red);
+  stroke-width: 1.6;
+  fill: none;
+  vector-effect: non-scaling-stroke;
+}
+
+.shot-chart-legend {
+  display: flex;
+  gap: 20px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.shot-chart-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.shot-chart-legend i {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
 }
 
 .power-blurb {

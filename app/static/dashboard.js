@@ -19,6 +19,9 @@ const state = {
   modelPerformanceLoading: false,
   shotQuality: null,
   shotQualityLoading: false,
+  shotChart: {},
+  shotChartPlayer: null,
+  shotChartFilter: "all",
 };
 
 const els = {
@@ -46,6 +49,7 @@ const els = {
   alertsPage: document.getElementById("alertsPage"),
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
+  shotChartPage: document.getElementById("shotChartPage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
   bracketPage: document.getElementById("bracketPage"),
   modelPerformancePage: document.getElementById("modelPerformancePage"),
@@ -170,6 +174,11 @@ function route() {
   if (section === "compare") {
     renderComparePage();
     setActivePage("comparePage", "compare");
+    return;
+  }
+  if (section === "shot-chart") {
+    renderShotChartPage(slug);
+    setActivePage("shotChartPage", "shot-chart");
     return;
   }
   if (section === "power-rankings") {
@@ -839,6 +848,7 @@ function renderPlayerDetail(slug) {
           <div><span>Impact</span><strong>${player.impact}</strong></div>
         </div>
         <p style="color:var(--muted);font-weight:700;margin:16px 0 0">Sentiment: <span class="${player.sentiment.label.toLowerCase()}">${player.sentiment.label}</span></p>
+        <a class="panel-link" href="#/shot-chart/${player.slug}-${player.id}">View Shot Chart <span aria-hidden="true">-></span></a>
       </aside>
     </section>
     ${gameLogPanel(player.id)}
@@ -1005,6 +1015,176 @@ function renderComparePage() {
   `;
   els.comparePage.querySelector('[data-compare-select="a"]').value = state.compare.a;
   els.comparePage.querySelector('[data-compare-select="b"]').value = state.compare.b;
+}
+
+function resolveShotChartPlayer(slug) {
+  const players = state.analytics?.players || [];
+  if (slug) {
+    const bySlug = playerByRoute(slug);
+    if (bySlug) return bySlug;
+  }
+  if (state.shotChartPlayer) {
+    const current = players.find((player) => String(player.id) === String(state.shotChartPlayer));
+    if (current) return current;
+  }
+  return [...players].sort((a, b) => b.impact - a.impact)[0];
+}
+
+function renderShotChartPage(slug) {
+  const players = state.analytics.players || [];
+  if (players.length < 1) {
+    els.shotChartPage.innerHTML = `<div class="page-heading"><div><h1>Player Shot Chart</h1><p>Not enough player data yet.</p></div></div>`;
+    return;
+  }
+  const player = resolveShotChartPlayer(slug);
+  state.shotChartPlayer = String(player.id);
+
+  const options = [...players]
+    .sort((a, b) => a.player.localeCompare(b.player))
+    .map((p) => `<option value="${p.id}">${html(p.player)} (${p.team})</option>`)
+    .join("");
+
+  els.shotChartPage.innerHTML = `
+    <div class="page-heading">
+      <div>
+        <h1>Player Shot Chart</h1>
+        <p>Every real shot attempt this season, mapped to a half-court, with zone efficiency vs. league average.</p>
+      </div>
+      <div class="filter-group">
+        <select data-shot-chart-player aria-label="Choose player">${options}</select>
+      </div>
+    </div>
+    <div class="segmented segmented-3" role="tablist" aria-label="Shot type filter">
+      <button class="segment ${state.shotChartFilter === "all" ? "active" : ""}" type="button" data-shot-chart-filter="all">All Shots</button>
+      <button class="segment ${state.shotChartFilter === "2" ? "active" : ""}" type="button" data-shot-chart-filter="2">2PT</button>
+      <button class="segment ${state.shotChartFilter === "3" ? "active" : ""}" type="button" data-shot-chart-filter="3">3PT</button>
+    </div>
+    <div class="profile-grid shot-chart-grid">
+      <article class="profile-panel shot-chart-panel">
+        <div class="panel-heading"><h2>${html(player.player)}</h2><span>${html(player.team_name)}</span></div>
+        <div id="${shotChartCourtWrapId(player.id)}">${renderShotChartCourtWrap(player.id)}</div>
+      </article>
+      <aside class="profile-panel">
+        <div class="panel-heading"><h2>Zone Breakdown</h2><span>vs. league average</span></div>
+        <div id="${shotChartZoneWrapId(player.id)}">${renderShotChartZoneWrap(player.id)}</div>
+      </aside>
+    </div>
+  `;
+  els.shotChartPage.querySelector("[data-shot-chart-player]").value = state.shotChartPlayer;
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
+}
+
+function shotChartCourtWrapId(playerId) {
+  return `shot-chart-court-${playerId}`;
+}
+
+function shotChartZoneWrapId(playerId) {
+  return `shot-chart-zones-${playerId}`;
+}
+
+function renderShotChartCourtWrap(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const data = entry.data || {};
+  const shots = data.shots || [];
+  if (!shots.length) return `<p class="footer-note">No shot chart data found for this player.</p>`;
+  const totals = data.totals || {};
+  return `
+    <div class="shot-chart-totals">
+      <span>${totals.fgm ?? 0}/${totals.fga ?? 0} FG (${(totals.fg_pct ?? 0).toFixed(1)}%)</span>
+      <span>${totals.fg3m ?? 0}/${totals.fg3a ?? 0} 3PT (${(totals.fg3_pct ?? 0).toFixed(1)}%)</span>
+      ${data.truncated ? `<span>Showing the most recent ${shots.length} shots</span>` : ""}
+    </div>
+    ${courtSvg(shots, state.shotChartFilter)}
+    <div class="shot-chart-legend">
+      <span><i style="background:var(--green)"></i>Make</span>
+      <span><i style="border:1.6px solid var(--red)"></i>Miss</span>
+    </div>
+  `;
+}
+
+function renderShotChartZoneWrap(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading zone breakdown...</p>`;
+  if (entry.error) return `<p class="footer-note">Zone breakdown unavailable right now.</p>`;
+  const zones = entry.data?.zones || [];
+  if (!zones.length) return `<p class="footer-note">No zone data found for this player.</p>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Zone</th><th>FGM</th><th>FGA</th><th>FG%</th><th>Lg FG%</th><th>Diff</th></tr></thead>
+        <tbody>${zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.fgm}</td>
+            <td>${zone.fga}</td>
+            <td>${zone.fg_pct.toFixed(1)}</td>
+            <td>${zone.league_fg_pct.toFixed(1)}</td>
+            <td class="${zone.diff >= 0 ? "positive" : "concern"}">${zone.diff > 0 ? "+" : ""}${zone.diff.toFixed(1)}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = { loading: false, error: false, data };
+      const courtTarget = document.getElementById(shotChartCourtWrapId(playerId));
+      if (courtTarget) courtTarget.innerHTML = renderShotChartCourtWrap(playerId);
+      const zoneTarget = document.getElementById(shotChartZoneWrapId(playerId));
+      if (zoneTarget) zoneTarget.innerHTML = renderShotChartZoneWrap(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const courtTarget = document.getElementById(shotChartCourtWrapId(playerId));
+      if (courtTarget) courtTarget.innerHTML = renderShotChartCourtWrap(playerId);
+      const zoneTarget = document.getElementById(shotChartZoneWrapId(playerId));
+      if (zoneTarget) zoneTarget.innerHTML = renderShotChartZoneWrap(playerId);
+    });
+}
+
+// Static half-court diagram (outer boundary, lane, free-throw circle, restricted
+// area, corner-three sidelines, three-point arc, hoop/backboard, center circle).
+// NBA Stats coordinates put the hoop at (0,0) with Y increasing away from the
+// basket; sx/sy below map that to the "0 0 500 470" viewBox with Y flipped so
+// the hoop sits near the bottom of the image instead of upside down.
+const COURT_LINES_SVG = `
+  <rect x="0.5" y="0.5" width="499" height="469" class="court-line" />
+  <rect x="170" y="280" width="160" height="190" class="court-line" />
+  <rect x="190" y="280" width="120" height="190" class="court-line" />
+  <line x1="220" y1="430" x2="280" y2="430" class="court-line" />
+  <circle cx="250" cy="422.5" r="7.5" class="court-line" />
+  <path d="M190,280 A60,60 0 0 1 310,280" class="court-line" />
+  <path d="M310,280 A60,60 0 0 1 190,280" class="court-line court-line-dashed" />
+  <path d="M210,422.5 A40,40 0 0 1 290,422.5" class="court-line" />
+  <line x1="30" y1="470" x2="30" y2="330" class="court-line" />
+  <line x1="470" y1="470" x2="470" y2="330" class="court-line" />
+  <path d="M470,333.5 A237.5,237.5 0 0 0 30,333.5" class="court-line" />
+  <path d="M190,0 A60,60 0 0 0 310,0" class="court-line" />
+  <path d="M230,0 A20,20 0 0 0 270,0" class="court-line" />
+`;
+
+function courtSvg(shots, filter) {
+  const filtered = (shots || []).filter((shot) => filter === "all" || String(shot.v) === filter);
+  const markers = filtered.map((shot) => {
+    const sx = Number(shot.x) + 250;
+    const sy = 422.5 - Number(shot.y);
+    if (shot.m) return `<circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="2.6" class="shot-made" />`;
+    const a = 2.2;
+    return `<path d="M${(sx - a).toFixed(1)} ${(sy - a).toFixed(1)} L${(sx + a).toFixed(1)} ${(sy + a).toFixed(1)} M${(sx + a).toFixed(1)} ${(sy - a).toFixed(1)} L${(sx - a).toFixed(1)} ${(sy + a).toFixed(1)}" class="shot-missed" />`;
+  });
+  return `
+    <svg class="court-svg" viewBox="0 0 500 470" role="img" aria-label="Shot chart">
+      ${COURT_LINES_SVG}
+      ${markers.join("")}
+    </svg>
+  `;
 }
 
 function renderPowerRankingsPage() {
@@ -1351,9 +1531,17 @@ els.playerSortFilter.addEventListener("change", () => {
 
 document.addEventListener("change", (event) => {
   const select = event.target.closest("[data-compare-select]");
-  if (!select) return;
-  state.compare[select.dataset.compareSelect] = select.value;
-  renderComparePage();
+  if (select) {
+    state.compare[select.dataset.compareSelect] = select.value;
+    renderComparePage();
+    return;
+  }
+
+  const shotChartSelect = event.target.closest("[data-shot-chart-player]");
+  if (shotChartSelect) {
+    state.shotChartPlayer = shotChartSelect.value;
+    renderShotChartPage();
+  }
 });
 
 document.addEventListener("click", (event) => {
@@ -1373,6 +1561,18 @@ document.addEventListener("click", (event) => {
       terms,
       refresh: true,
     });
+    return;
+  }
+
+  const shotChartFilterButton = event.target.closest("[data-shot-chart-filter]");
+  if (shotChartFilterButton) {
+    state.shotChartFilter = shotChartFilterButton.dataset.shotChartFilter;
+    shotChartFilterButton.parentElement.querySelectorAll("[data-shot-chart-filter]").forEach((button) => {
+      button.classList.toggle("active", button === shotChartFilterButton);
+    });
+    const playerId = state.shotChartPlayer;
+    const courtTarget = document.getElementById(shotChartCourtWrapId(playerId));
+    if (courtTarget) courtTarget.innerHTML = renderShotChartCourtWrap(playerId);
   }
 });
 

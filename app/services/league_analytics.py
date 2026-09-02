@@ -97,6 +97,23 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Per-player shot chart. We score every live shot with an XGBoost shot-quality model
+# (see ShotQualityService) but never actually draw one on a court - NBA.com Stats,
+# ESPN, and BallR all lead a player's page with exactly that. `_SHOT_CHART_MAX_POINTS`
+# caps the raw shot list sent to the browser (a full season can be 1000+ attempts) since
+# the zone table already summarizes the complete sample; `SHOT_ZONE_ORDER` mirrors NBA
+# Stats' own SHOT_ZONE_BASIC groupings, ordered rim-out-to-arc so the zone table reads
+# the way a court does.
+_SHOT_CHART_MAX_POINTS = 1200
+SHOT_ZONE_ORDER = [
+    "Restricted Area",
+    "In The Paint (Non-RA)",
+    "Mid-Range",
+    "Left Corner 3",
+    "Right Corner 3",
+    "Above the Break 3",
+]
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -517,6 +534,111 @@ class LeagueAnalyticsService:
             "playergamelog",
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
+        )
+
+    def shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Every real shot attempt (make + miss) for a player this season, mapped to
+        court coordinates, plus a per-zone FG% breakdown vs. league average. Playoffs
+        first with a Regular Season fallback - same pattern as `player_game_log`."""
+        season_type = "Playoffs"
+        frames = self._shot_chart_frames(player_id, season, season_type)
+        shots_frame = frames.get("Shot_Chart_Detail", pd.DataFrame())
+        if shots_frame.empty:
+            season_type = "Regular Season"
+            frames = self._shot_chart_frames(player_id, season, season_type)
+            shots_frame = frames.get("Shot_Chart_Detail", pd.DataFrame())
+        if shots_frame.empty:
+            fallback = shot_chart_fallback()
+            fallback["player_id"] = player_id
+            fallback["season"] = season
+            return fallback
+
+        for column in ["LOC_X", "LOC_Y", "SHOT_MADE_FLAG", "SHOT_ATTEMPTED_FLAG"]:
+            if column in shots_frame:
+                shots_frame[column] = pd.to_numeric(shots_frame[column], errors="coerce").fillna(0)
+
+        shots_rows = shots_frame.to_dict("records")
+        league_frame = frames.get("LeagueAverages", pd.DataFrame())
+        zones = aggregate_shot_zones(shots_rows, league_frame.to_dict("records"))
+
+        fga = int(shots_frame["SHOT_ATTEMPTED_FLAG"].sum()) if "SHOT_ATTEMPTED_FLAG" in shots_frame else len(shots_rows)
+        fgm = int(shots_frame["SHOT_MADE_FLAG"].sum()) if "SHOT_MADE_FLAG" in shots_frame else 0
+        is_three = [str(row.get("SHOT_TYPE", "")).startswith("3PT") for row in shots_rows]
+        fg3a = sum(1 for flag in is_three if flag)
+        fg3m = sum(1 for flag, row in zip(is_three, shots_rows) if flag and int(row.get("SHOT_MADE_FLAG", 0)) == 1)
+
+        shots = [
+            {
+                "x": float(row.get("LOC_X", 0)),
+                "y": float(row.get("LOC_Y", 0)),
+                "m": int(row.get("SHOT_MADE_FLAG", 0)),
+                "v": 3 if three else 2,
+            }
+            for row, three in zip(shots_rows, is_three)
+        ]
+        truncated = len(shots) > _SHOT_CHART_MAX_POINTS
+        if truncated:
+            shots = shots[-_SHOT_CHART_MAX_POINTS:]
+
+        return {
+            "player_id": player_id,
+            "player_name": shots_rows[0].get("PLAYER_NAME", "") if shots_rows else "",
+            "team": shots_rows[0].get("TEAM_NAME", "") if shots_rows else "",
+            "season": season,
+            "season_type": season_type,
+            "totals": {
+                "fgm": fgm,
+                "fga": fga,
+                "fg_pct": round(fgm / fga * 100, 1) if fga else 0.0,
+                "fg3m": fg3m,
+                "fg3a": fg3a,
+                "fg3_pct": round(fg3m / fg3a * 100, 1) if fg3a else 0.0,
+            },
+            "shots": shots,
+            "zones": zones,
+            "truncated": truncated,
+        }
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> dict[str, pd.DataFrame]:
+        """Raw + league-average shot data for one player/season/season-type (NBA Stats
+        `shotchartdetail`). `ContextMeasure=FGA` is required - the endpoint's own default
+        (`PTS`) only returns *made* shots, which would silently render a 100% shot chart."""
+        return self._stats_result_sets(
+            "shotchartdetail",
+            {
+                "TeamID": 0,
+                "PlayerID": player_id,
+                "ContextMeasure": "FGA",
+                "LastNGames": "0",
+                "LeagueID": "00",
+                "Month": "0",
+                "OpponentTeamID": "0",
+                "Period": "0",
+                "SeasonType": season_type,
+                "AheadBehind": "",
+                "ClutchTime": "",
+                "ContextFilter": "",
+                "DateFrom": "",
+                "DateTo": "",
+                "EndPeriod": "",
+                "EndRange": "",
+                "GameID": "",
+                "GameSegment": "",
+                "Location": "",
+                "Outcome": "",
+                "PlayerPosition": "",
+                "PointDiff": "",
+                "Position": "",
+                "RangeType": "",
+                "RookieYear": "",
+                "Season": season,
+                "SeasonSegment": "",
+                "StartPeriod": "",
+                "StartRange": "",
+                "VsConference": "",
+                "VsDivision": "",
+            },
         )
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1148,6 +1270,28 @@ class LeagueAnalyticsService:
         except Exception:
             return pd.DataFrame()
 
+    def _stats_result_sets(self, endpoint: str, params: dict[str, Any]) -> dict[str, pd.DataFrame]:
+        """Like `_stats_frame`, but returns every named result set instead of just one.
+        `shotchartdetail` is the first endpoint in this file that needs two result sets
+        at once (`Shot_Chart_Detail` and `LeagueAverages`) - added as a sibling instead
+        of changing `_stats_frame`, which already has ~10 single-result-set call sites."""
+        try:
+            response = requests.get(
+                f"https://stats.nba.com/stats/{endpoint}",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_sets = response.json().get("resultSets", [])
+            return {
+                item.get("name", ""): pd.DataFrame(item.get("rowSet", []), columns=item.get("headers", []))
+                for item in result_sets
+            }
+        except Exception:
+            return {}
+
     @lru_cache(maxsize=16)
     def _espn_scoreboard(self, game_date: date) -> list[dict[str, Any]]:
         try:
@@ -1457,6 +1601,77 @@ def player_advanced_fallback(pts: float, minutes: float, impact: float) -> dict[
         "ts_pct": round(min(70.0, max(45.0, 52.0 + pts * 0.15)), 1),
         "usg_pct": round(min(38.0, max(10.0, (pts / max(minutes, 1.0)) * 85.0)), 1),
         "pie": round(min(30.0, max(3.0, impact * 0.35)), 1),
+    }
+
+
+def aggregate_shot_zones(shots_rows: list[dict[str, Any]], league_avg_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-zone FG% for a player vs. the league average in that same zone.
+
+    Standalone (not a method) so `scripts/test_shot_chart.py` can unit-test the zone
+    math directly, without network access or instantiating the full service.
+
+    NBA Stats' `LeagueAverages` result set has multiple rows per SHOT_ZONE_BASIC - one
+    per SHOT_ZONE_AREA x SHOT_ZONE_RANGE combination - so the league baseline must
+    sum(FGM)/sum(FGA) across every matching row. Taking just the first matching row
+    would silently use one arbitrary sub-zone's percentage as the whole zone's average.
+    "Backcourt" is excluded from the returned zones (tiny, distorting sample size) but
+    callers should still count it toward overall totals.fga.
+    """
+    player_by_zone: dict[str, dict[str, float]] = {}
+    for row in shots_rows:
+        zone = str(row.get("SHOT_ZONE_BASIC", "") or "")
+        if not zone or zone == "Backcourt":
+            continue
+        bucket = player_by_zone.setdefault(zone, {"fgm": 0.0, "fga": 0.0})
+        bucket["fga"] += float(row.get("SHOT_ATTEMPTED_FLAG", 1) or 1)
+        bucket["fgm"] += float(row.get("SHOT_MADE_FLAG", 0) or 0)
+
+    league_by_zone: dict[str, dict[str, float]] = {}
+    for row in league_avg_rows:
+        zone = str(row.get("SHOT_ZONE_BASIC", "") or "")
+        if not zone:
+            continue
+        bucket = league_by_zone.setdefault(zone, {"fgm": 0.0, "fga": 0.0})
+        bucket["fga"] += float(row.get("FGA", 0) or 0)
+        bucket["fgm"] += float(row.get("FGM", 0) or 0)
+
+    order = {name: index for index, name in enumerate(SHOT_ZONE_ORDER)}
+    zones = []
+    for zone_name in sorted(player_by_zone, key=lambda name: order.get(name, len(SHOT_ZONE_ORDER))):
+        player = player_by_zone[zone_name]
+        fga = player["fga"]
+        fgm = player["fgm"]
+        fg_pct = round(fgm / fga * 100, 1) if fga else 0.0
+        league = league_by_zone.get(zone_name, {"fgm": 0.0, "fga": 0.0})
+        league_fg_pct = round(league["fgm"] / league["fga"] * 100, 1) if league["fga"] else 0.0
+        zones.append(
+            {
+                "zone": zone_name,
+                "fgm": int(fgm),
+                "fga": int(fga),
+                "fg_pct": fg_pct,
+                "league_fg_pct": league_fg_pct,
+                "diff": round(fg_pct - league_fg_pct, 1),
+            }
+        )
+    return zones
+
+
+def shot_chart_fallback() -> dict[str, Any]:
+    """Deterministic empty-shape stand-in when both Playoffs and Regular Season shot
+    chart data are unavailable, matching the `*_fallback()` convention used elsewhere
+    in this file so the page always has a consistent shape to render instead of
+    throwing."""
+    return {
+        "player_id": 0,
+        "player_name": "",
+        "team": "",
+        "season": "",
+        "season_type": "",
+        "totals": {"fgm": 0, "fga": 0, "fg_pct": 0.0, "fg3m": 0, "fg3a": 0, "fg3_pct": 0.0},
+        "shots": [],
+        "zones": [],
+        "truncated": False,
     }
 
 
