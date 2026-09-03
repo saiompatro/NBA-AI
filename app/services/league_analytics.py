@@ -519,6 +519,99 @@ class LeagueAnalyticsService:
             "PlayerGameLog",
         )
 
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Shot-location chart (court x/y, make/miss, zone) for a player, playoffs
+        first with a regular-season fallback so the panel still has content in the
+        off-season gap - same pattern as `player_game_log`. The shot-quality model
+        is this app's flagship feature, yet nothing ever showed *where* shots come
+        from - every competing product (NBA.com Stats, ESPN, Cleaning the Glass)
+        leads a player page with exactly this chart."""
+        season_type = "Playoffs"
+        frame = self._shot_chart_frame(player_id, season, season_type)
+        if frame.empty:
+            season_type = "Regular Season"
+            frame = self._shot_chart_frame(player_id, season, season_type)
+        if frame.empty:
+            return {
+                "season_type": season_type,
+                "shots": [],
+                "zones": [],
+                "totals": {"fga": 0, "fgm": 0, "fg_pct": 0.0, "efg_pct": 0.0},
+            }
+
+        for column in ["LOC_X", "LOC_Y", "SHOT_MADE_FLAG", "SHOT_DISTANCE"]:
+            if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+
+        records = frame.to_dict("records")
+        shots = [
+            {
+                "x": float(item.get("LOC_X", 0)),
+                "y": float(item.get("LOC_Y", 0)),
+                "made": bool(item.get("SHOT_MADE_FLAG", 0)),
+                "zone": str(item.get("SHOT_ZONE_BASIC", "")),
+                "distance": float(item.get("SHOT_DISTANCE", 0)),
+                "type": str(item.get("SHOT_TYPE", "")),
+            }
+            for item in records[:600]
+        ]
+
+        fga = len(records)
+        fgm = sum(1 for item in records if item.get("SHOT_MADE_FLAG"))
+        pts = sum(
+            (3 if "3PT" in str(item.get("SHOT_TYPE", "")) else 2)
+            for item in records
+            if item.get("SHOT_MADE_FLAG")
+        )
+
+        return {
+            "season_type": season_type,
+            "shots": shots,
+            "zones": aggregate_shot_zones(records),
+            "totals": {
+                "fga": fga,
+                "fgm": fgm,
+                "fg_pct": round(fgm / fga * 100, 1) if fga else 0.0,
+                "efg_pct": round(pts / 2 / fga * 100, 1) if fga else 0.0,
+            },
+        }
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frame(self, player_id: int, season: str, season_type: str) -> pd.DataFrame:
+        params = {
+            "PlayerID": player_id,
+            "TeamID": 0,
+            "Season": season,
+            "SeasonType": season_type,
+            "ContextMeasure": "FGA",
+            "LeagueID": "00",
+            "Period": 0,
+            "LastNGames": 0,
+            "Month": 0,
+            "OpponentTeamID": 0,
+            "GameID": "",
+            "Outcome": "",
+            "Location": "",
+            "SeasonSegment": "",
+            "DateFrom": "",
+            "DateTo": "",
+            "VsConference": "",
+            "VsDivision": "",
+            "PlayerPosition": "",
+            "RookieYear": "",
+            "GameSegment": "",
+            "ClutchTime": "",
+            "AheadBehind": "",
+            "PointDiff": "",
+            "RangeType": 0,
+            "StartPeriod": "",
+            "EndPeriod": "",
+            "StartRange": "",
+            "EndRange": "",
+            "ContextFilter": "",
+        }
+        return self._stats_frame("shotchartdetail", params, "Shot_Chart_Detail")
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()
@@ -1464,6 +1557,33 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+def aggregate_shot_zones(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group raw shotchartdetail rows into per-zone FGA/FGM/FG%/points-per-shot -
+    the same zone breakdown NBA.com Stats and Cleaning the Glass show under a
+    shot chart. Pure function so it's testable without a network call."""
+    zones: dict[str, dict[str, float]] = {}
+    for item in records:
+        zone = str(item.get("SHOT_ZONE_BASIC") or "Unknown")
+        bucket = zones.setdefault(zone, {"fga": 0, "fgm": 0, "pts": 0})
+        bucket["fga"] += 1
+        if item.get("SHOT_MADE_FLAG"):
+            bucket["fgm"] += 1
+            bucket["pts"] += 3 if "3PT" in str(item.get("SHOT_TYPE", "")) else 2
+
+    rows = [
+        {
+            "zone": zone,
+            "fga": int(bucket["fga"]),
+            "fgm": int(bucket["fgm"]),
+            "fg_pct": round(bucket["fgm"] / bucket["fga"] * 100, 1) if bucket["fga"] else 0.0,
+            "pts_per_shot": round(bucket["pts"] / bucket["fga"], 2) if bucket["fga"] else 0.0,
+        }
+        for zone, bucket in zones.items()
+    ]
+    rows.sort(key=lambda row: row["fga"], reverse=True)
+    return rows
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:

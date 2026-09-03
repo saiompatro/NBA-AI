@@ -1981,6 +1981,71 @@ select {
   font-size: 0.74rem;
 }
 
+.shot-filter {
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 0;
+  min-width: 180px;
+}
+
+.court-svg {
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  display: block;
+  margin: 14px auto;
+}
+
+.court-line {
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.shot-made,
+.shot-miss {
+  stroke-width: 1;
+  fill-opacity: 0.85;
+}
+
+.shot-made {
+  fill: var(--green);
+  stroke: var(--green);
+}
+
+.shot-miss {
+  fill: var(--red);
+  stroke: var(--red);
+}
+
+.shot-chart-legend {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+
+.shot-chart-legend .shot-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+
+.shot-chart-legend .shot-made {
+  background: var(--green);
+}
+
+.shot-chart-legend .shot-miss {
+  background: var(--red);
+}
+
+.shot-zone-table {
+  min-width: 0;
+}
+
 @media (max-width: 1180px) {
   .kpi-grid {
     grid-template-columns: repeat(2, 1fr);
