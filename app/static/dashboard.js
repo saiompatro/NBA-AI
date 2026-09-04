@@ -11,6 +11,7 @@ const state = {
   news: {},
   compare: { a: null, b: null },
   gameLog: {},
+  shotChart: {},
   powerRankings: null,
   powerRankingsLoading: false,
   bracket: null,
@@ -731,6 +732,88 @@ function loadGameLog(playerId) {
     });
 }
 
+function shotChartPanel(playerId) {
+  return `
+    <article class="profile-panel">
+      <div class="panel-heading"><h2>Shot Chart</h2></div>
+      <div id="shot-chart-${playerId}">${renderShotChartContent(playerId)}</div>
+    </article>
+  `;
+}
+
+function renderShotChartContent(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  if (!entry.available) return `<p class="footer-note">Shot chart unavailable for this player.</p>`;
+  return `
+    <div class="shot-chart-wrap">
+      ${courtSvg(entry.shots || [])}
+      <div class="shot-legend">
+        <span><svg width="12" height="12"><circle cx="6" cy="6" r="4" class="shot-made" /></svg> Made</span>
+        <span><svg width="12" height="12"><circle cx="6" cy="6" r="4" class="shot-miss" /></svg> Miss</span>
+        <span>${entry.total.fgm}-${entry.total.fga} FG (${entry.total.fg_pct}%) - eFG% ${entry.total.efg_pct}%</span>
+      </div>
+    </div>
+    ${shotZoneTable(entry.zones || [])}
+  `;
+}
+
+function courtSvg(shots) {
+  return `
+    <svg class="court-svg" viewBox="-250 -422.5 500 470" role="img" aria-label="Shot chart">
+      <g transform="scale(1,-1)">
+        <rect class="court-line" x="-250" y="-47.5" width="500" height="422.5" vector-effect="non-scaling-stroke" />
+        <rect class="court-line" x="-80" y="-47.5" width="160" height="190" vector-effect="non-scaling-stroke" />
+        <circle class="court-line" cx="0" cy="142.5" r="60" vector-effect="non-scaling-stroke" />
+        <path class="court-line" d="M -40 -47.5 A 40 40 0 0 0 40 -47.5" vector-effect="non-scaling-stroke" />
+        <line class="court-line" x1="-30" y1="-7.5" x2="30" y2="-7.5" vector-effect="non-scaling-stroke" />
+        <circle class="court-line" cx="0" cy="0" r="7.5" vector-effect="non-scaling-stroke" />
+        <line class="court-line" x1="-220" y1="-47.5" x2="-220" y2="92.5" vector-effect="non-scaling-stroke" />
+        <line class="court-line" x1="220" y1="-47.5" x2="220" y2="92.5" vector-effect="non-scaling-stroke" />
+        <path class="court-line" d="M -220 92.5 A 237.5 237.5 0 0 0 220 92.5" vector-effect="non-scaling-stroke" />
+        ${shots.map((shot) => `<circle cx="${shot.x}" cy="${shot.y}" r="4" class="${shot.made ? "shot-made" : "shot-miss"}" />`).join("")}
+      </g>
+    </svg>
+  `;
+}
+
+function shotZoneTable(zones) {
+  if (!zones.length) return `<p class="footer-note">No zone data available.</p>`;
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Zone</th><th>FGM-FGA</th><th>FG%</th><th>Lg%</th><th>Diff</th></tr></thead>
+        <tbody>${zones.map((zone) => `
+          <tr>
+            <td>${html(zone.zone)}</td>
+            <td>${zone.fgm}-${zone.fga}</td>
+            <td>${zone.fg_pct}%</td>
+            <td>${zone.league_pct === null ? "—" : `${zone.league_pct}%`}</td>
+            <td class="${zone.relative === null ? "" : zone.relative >= 0 ? "positive" : "concern"}">${zone.relative === null ? "—" : `${zone.relative > 0 ? "+" : ""}${zone.relative}%`}</td>
+          </tr>
+        `).join("")}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function loadShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true, error: false };
+  fetch(`/api/players/${playerId}/shot-chart`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.shotChart[playerId] = { loading: false, error: false, ...data };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    })
+    .catch(() => {
+      state.shotChart[playerId] = { loading: false, error: true };
+      const target = document.getElementById(`shot-chart-${playerId}`);
+      if (target) target.innerHTML = renderShotChartContent(playerId);
+    });
+}
+
 function renderTeamDetail(slug) {
   const team = teamBySlug(slug);
   if (!team) {
@@ -842,10 +925,12 @@ function renderPlayerDetail(slug) {
       </aside>
     </section>
     ${gameLogPanel(player.id)}
+    ${shotChartPanel(player.id)}
     ${newsPanel({ key, title: "Latest Player News", type: "player", id: player.id, team: player.team, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "player", team: player.team, terms });
   if (!state.gameLog[player.id]) loadGameLog(player.id);
+  if (!state.shotChart[player.id]) loadShotChart(player.id);
 }
 
 function renderAlertsPage() {

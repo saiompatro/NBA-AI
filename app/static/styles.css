@@ -2145,3 +2145,48 @@ select {
     aspect-ratio: 16 / 9;
   }
 }
+
+.shot-chart-wrap {
+  max-width: 440px;
+  margin: 0 auto;
+}
+
+.court-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.shot-made {
+  fill: var(--accent);
+  fill-opacity: 0.85;
+  stroke: none;
+}
+
+.shot-miss {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.6;
+}
+
+.shot-legend {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin: 10px 0 18px;
+}
+
+.shot-legend svg {
+  vertical-align: middle;
+  margin-right: 2px;
+}

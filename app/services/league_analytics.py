@@ -97,6 +97,23 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Shot chart + zone efficiency. `shotchartdetail` returns every shot a player has taken
+# with an (x, y) location AND a `LeagueAverages` result set for the same call, so a
+# player's FG% per zone can be benchmarked against the league rate for free instead of
+# needing a second endpoint. Cap the shots actually sent to the client so a high-volume
+# scorer's full-season shot list doesn't bloat the response - the zone table is still
+# computed from the full (unsampled) list so capping never skews the efficiency numbers.
+_SHOT_CHART_SAMPLE_CAP = 500
+_SHOT_ZONE_ORDER = [
+    "Restricted Area",
+    "In The Paint (Non-RA)",
+    "Mid-Range",
+    "Left Corner 3",
+    "Right Corner 3",
+    "Above the Break 3",
+    "Backcourt",
+]
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -518,6 +535,89 @@ class LeagueAnalyticsService:
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
         )
+
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Real shot locations + per-zone FG% vs league average, playoffs first with a
+        regular-season fallback (same rationale as `player_game_log` above)."""
+        season_type = "Playoffs"
+        result_sets = self._shot_chart_result_sets(player_id, season, season_type)
+        shot_rows = result_sets.get("Shot_Chart_Detail", [])
+        if not shot_rows:
+            season_type = "Regular Season"
+            result_sets = self._shot_chart_result_sets(player_id, season, season_type)
+            shot_rows = result_sets.get("Shot_Chart_Detail", [])
+
+        empty = {
+            "available": False,
+            "season_type": season_type,
+            "total": {"fgm": 0, "fga": 0, "fg_pct": 0.0, "efg_pct": 0.0},
+            "zones": [],
+            "shots": [],
+            "sample_size": 0,
+            "sampled": False,
+        }
+        if not shot_rows:
+            return empty
+
+        league_rows = result_sets.get("LeagueAverages", [])
+        shots = [
+            {
+                "x": row.get("LOC_X", 0),
+                "y": row.get("LOC_Y", 0),
+                "made": int(row.get("SHOT_MADE_FLAG", 0)),
+                "value": 3 if "3PT" in str(row.get("SHOT_TYPE", "")) else 2,
+                "distance": row.get("SHOT_DISTANCE", 0),
+                "zone": row.get("SHOT_ZONE_BASIC", ""),
+            }
+            for row in shot_rows
+        ]
+        if not shots:
+            return empty
+
+        fga = len(shots)
+        fgm = sum(shot["made"] for shot in shots)
+        made_threes = sum(1 for shot in shots if shot["made"] and shot["value"] == 3)
+        total = {
+            "fgm": fgm,
+            "fga": fga,
+            "fg_pct": round(100 * fgm / fga, 1) if fga else 0.0,
+            "efg_pct": round(100 * (fgm + 0.5 * made_threes) / fga, 1) if fga else 0.0,
+        }
+        zones = aggregate_shot_zones(shots, league_rows)
+        sampled_shots = sample_shots(shots, _SHOT_CHART_SAMPLE_CAP)
+        return {
+            "available": True,
+            "season_type": season_type,
+            "total": total,
+            "zones": zones,
+            "shots": sampled_shots,
+            "sample_size": len(sampled_shots),
+            "sampled": len(sampled_shots) < len(shots),
+        }
+
+    @lru_cache(maxsize=32)
+    def _shot_chart_result_sets(self, player_id: int, season: str, season_type: str) -> dict[str, list[dict[str, Any]]]:
+        return self._stats_result_sets(
+            "shotchartdetail", shot_chart_params(player_id, season, season_type)
+        )
+
+    def _stats_result_sets(self, endpoint: str, params: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+        try:
+            response = requests.get(
+                f"https://stats.nba.com/stats/{endpoint}",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_sets = response.json().get("resultSets", [])
+            return {
+                item.get("name"): [dict(zip(item.get("headers", []), row)) for row in item.get("rowSet", [])]
+                for item in result_sets
+            }
+        except Exception:
+            return {}
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
@@ -1345,6 +1445,109 @@ def common_dash_params(season: str, season_type: str, per_mode: str) -> dict[str
         "PlusMinus": "N",
         "Rank": "N",
     }
+
+
+def shot_chart_params(player_id: int, season: str, season_type: str) -> dict[str, Any]:
+    """Filter params for nba_api's shotchartdetail endpoint - it 400s if any of these
+    keys are missing, so every key nba_api's own wrapper sends is included even though
+    most stay blank/default for a simple "all of this player's shots" query."""
+    return {
+        "PlayerID": player_id,
+        "Season": season,
+        "SeasonType": season_type,
+        "TeamID": 0,
+        "ContextMeasure": "FGA",
+        "LeagueID": "00",
+        "Period": 0,
+        "LastNGames": 0,
+        "Month": 0,
+        "OpponentTeamID": 0,
+        "StartPeriod": 1,
+        "EndPeriod": 10,
+        "StartRange": 0,
+        "EndRange": 28800,
+        "RangeType": 0,
+        "PlayerPosition": "",
+        "DateFrom": "",
+        "DateTo": "",
+        "GameID": "",
+        "GameSegment": "",
+        "Location": "",
+        "Outcome": "",
+        "Position": "",
+        "RookieYear": "",
+        "SeasonSegment": "",
+        "VsConference": "",
+        "VsDivision": "",
+        "ClutchTime": "",
+        "AheadBehind": "",
+        "PointDiff": "",
+        "GameScope": "",
+        "PlayerExperience": "",
+    }
+
+
+def aggregate_shot_zones(shots: list[dict[str, Any]], league_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-zone FGM/FGA/FG% for `shots` against the pooled league FG% for that zone.
+
+    `league_rows` (the raw LeagueAverages result set) carries several rows per
+    SHOT_ZONE_BASIC - split further by SHOT_ZONE_AREA/SHOT_ZONE_RANGE - so the league
+    rate has to be a make/attempt-weighted pool (sum FGM, sum FGA, then divide) rather
+    than an average of each row's own FG_PCT, or a zone with lopsided attempt volume
+    across its sub-areas would be priced wrong.
+    """
+    league_pool: dict[str, dict[str, int]] = {}
+    for row in league_rows:
+        zone = row.get("SHOT_ZONE_BASIC")
+        if not zone:
+            continue
+        pool = league_pool.setdefault(zone, {"fgm": 0, "fga": 0})
+        pool["fgm"] += int(row.get("FGM", 0) or 0)
+        pool["fga"] += int(row.get("FGA", 0) or 0)
+
+    player_pool: dict[str, dict[str, int]] = {}
+    for shot in shots:
+        zone = shot.get("zone")
+        if not zone:
+            continue
+        pool = player_pool.setdefault(zone, {"fgm": 0, "fga": 0})
+        pool["fga"] += 1
+        pool["fgm"] += int(shot.get("made", 0))
+
+    def sort_key(zone: str) -> int:
+        try:
+            return _SHOT_ZONE_ORDER.index(zone)
+        except ValueError:
+            return len(_SHOT_ZONE_ORDER)
+
+    zones = []
+    for zone in sorted(player_pool, key=sort_key):
+        fgm = player_pool[zone]["fgm"]
+        fga = player_pool[zone]["fga"]
+        fg_pct = round(100 * fgm / fga, 1) if fga else 0.0
+        league = league_pool.get(zone)
+        league_pct = round(100 * league["fgm"] / league["fga"], 1) if league and league["fga"] else None
+        relative = round(fg_pct - league_pct, 1) if league_pct is not None else None
+        zones.append(
+            {
+                "zone": zone,
+                "fgm": fgm,
+                "fga": fga,
+                "fg_pct": fg_pct,
+                "league_pct": league_pct,
+                "relative": relative,
+            }
+        )
+    return zones
+
+
+def sample_shots(rows: list[dict[str, Any]], cap: int = _SHOT_CHART_SAMPLE_CAP) -> list[dict[str, Any]]:
+    """Cap the shot list sent to the client. shotchartdetail returns a player's shots in
+    season-chronological (oldest-first) order, so keep the tail (most recent) when
+    truncating rather than the head."""
+    if len(rows) <= cap:
+        return rows
+    return rows[-cap:]
 
 
 def sentiment_score(text: str) -> float:
