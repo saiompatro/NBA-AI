@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from threading import Lock
 
 from flask import Flask, jsonify, render_template, request
@@ -78,6 +79,15 @@ def create_app() -> Flask:
     @app.get("/api/schedule")
     def schedule():
         return jsonify({"upcoming_games": analytics.upcoming_games()})
+
+    @app.get("/api/scores")
+    def scores():
+        raw_date = request.args.get("date", "")
+        try:
+            game_date = date.fromisoformat(raw_date) if raw_date else date.today()
+        except ValueError:
+            game_date = date.today()
+        return jsonify({"date": game_date.isoformat(), "games": analytics.scores_for_date(game_date)})
 
     @app.get("/api/game-prediction")
     def game_prediction():

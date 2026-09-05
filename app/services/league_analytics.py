@@ -165,7 +165,19 @@ PLAYOFF_SEEDS_2026 = [
 TEAM_BY_ID = {team["team_id"]: team for team in PLAYOFF_SEEDS_2026}
 TEAM_BY_ABBR = {team["abbr"]: team for team in PLAYOFF_SEEDS_2026}
 ESPN_TEAM_CODES = {"NYK": "ny", "SAS": "sa", "PHX": "phx"}
-SCHEDULE_TEAM_ALIASES = {"NY": "NYK", "SA": "SAS"}
+# ESPN abbreviates a handful of teams differently than the NBA Stats/nba_api
+# convention this app otherwise uses. Only NY/SA mattered while this map fed
+# the (16 playoff-team-only) rest-day lookback; the full-league scores page
+# needs the rest of the non-playoff teams normalized too, or their team-profile
+# links resolve to the wrong (or no) slug.
+SCHEDULE_TEAM_ALIASES = {
+    "NY": "NYK",
+    "SA": "SAS",
+    "GS": "GSW",
+    "UTAH": "UTA",
+    "NO": "NOP",
+    "WSH": "WAS",
+}
 
 
 @dataclass(frozen=True)
@@ -1148,8 +1160,7 @@ class LeagueAnalyticsService:
         except Exception:
             return pd.DataFrame()
 
-    @lru_cache(maxsize=16)
-    def _espn_scoreboard(self, game_date: date) -> list[dict[str, Any]]:
+    def _fetch_espn_scoreboard(self, game_date: date) -> list[dict[str, Any]]:
         try:
             response = requests.get(
                 "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
@@ -1161,6 +1172,62 @@ class LeagueAnalyticsService:
             return response.json().get("events", [])
         except Exception:
             return []
+
+    @lru_cache(maxsize=40)
+    def _espn_scoreboard_cached(self, game_date: date) -> list[dict[str, Any]]:
+        return self._fetch_espn_scoreboard(game_date)
+
+    def _espn_scoreboard(self, game_date: date) -> list[dict[str, Any]]:
+        """Finished days are immutable, so they're safe to cache for the life of
+        the process. Today's isn't - the scores page polls it for a day that's
+        still in progress, and a process-lifetime cache would freeze it at
+        whatever the score was on the first request."""
+        if game_date == date.today():
+            return self._fetch_espn_scoreboard(game_date)
+        return self._espn_scoreboard_cached(game_date)
+
+    def scores_for_date(self, game_date: date) -> list[dict[str, Any]]:
+        """Full-league final/live/scheduled scores for one date, with per-quarter
+        line scores - the date-navigable scoreboard every competing NBA site
+        (ESPN, NBA.com, CBS Sports) leads with and this app never had."""
+
+        def _side(competitors: list[dict[str, Any]], home_away: str) -> dict[str, Any]:
+            competitor = next((c for c in competitors if c.get("homeAway") == home_away), {})
+            team = competitor.get("team", {})
+            abbr = normalize_team_abbr(team.get("abbreviation", ""))
+            score = competitor.get("score")
+            record = next(iter(competitor.get("records", [])), {}).get("summary", "")
+            linescores = [
+                entry.get("value") for entry in competitor.get("linescores", []) if entry.get("value") is not None
+            ]
+            return {
+                "abbr": abbr,
+                "name": team.get("shortDisplayName") or team.get("name") or abbr,
+                "logo": team.get("logo", ""),
+                "score": int(score) if score not in (None, "") else None,
+                "record": record,
+                "winner": bool(competitor.get("winner")),
+                "linescores": linescores,
+            }
+
+        games: list[dict[str, Any]] = []
+        for event in self._espn_scoreboard(game_date):
+            competitions = event.get("competitions") or []
+            if not competitions:
+                continue
+            competitors = competitions[0].get("competitors", [])
+            status_type = event.get("status", {}).get("type", {})
+            games.append(
+                {
+                    "game_id": event.get("id", ""),
+                    "start": event.get("date", ""),
+                    "status_state": status_type.get("state", ""),
+                    "status_detail": status_type.get("shortDetail", "Scheduled"),
+                    "away": _side(competitors, "away"),
+                    "home": _side(competitors, "home"),
+                }
+            )
+        return games
 
     @lru_cache(maxsize=1)
     def _espn_news(self) -> list[dict[str, Any]]:

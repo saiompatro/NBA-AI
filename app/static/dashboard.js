@@ -15,6 +15,9 @@ const state = {
   powerRankingsLoading: false,
   bracket: null,
   bracketLoading: false,
+  scoresDate: null,
+  scores: {},
+  scoresLoading: {},
   modelPerformance: null,
   modelPerformanceLoading: false,
   shotQuality: null,
@@ -48,6 +51,7 @@ const els = {
   comparePage: document.getElementById("comparePage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
   bracketPage: document.getElementById("bracketPage"),
+  scoresPage: document.getElementById("scoresPage"),
   modelPerformancePage: document.getElementById("modelPerformancePage"),
   settingsPage: document.getElementById("settingsPage"),
 };
@@ -76,6 +80,22 @@ function pct(value) {
 function formatTime(dateValue) {
   if (!dateValue) return "TBD";
   return new Date(dateValue).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function isoDateOnly(dateValue) {
+  const d = dateValue ? new Date(dateValue) : new Date();
+  const offset = d.getTimezoneOffset() * 60000;
+  return new Date(d.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function shiftIsoDate(iso, days) {
+  const d = new Date(`${iso}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return isoDateOnly(d);
+}
+
+function formatDateChip(iso) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
 }
 
 function formatDate(dateValue) {
@@ -180,6 +200,11 @@ function route() {
   if (section === "bracket") {
     renderBracketPage();
     setActivePage("bracketPage", "bracket");
+    return;
+  }
+  if (section === "scores") {
+    renderScoresPage(slug || null);
+    setActivePage("scoresPage", "scores");
     return;
   }
   if (section === "model") {
@@ -1138,6 +1163,108 @@ function renderBracketPage() {
   els.bracketPage.innerHTML = `${heading}<div class="conference-grid">${conferences}</div>${finalsPanel}`;
 }
 
+function renderScoresPage(routeDate) {
+  if (routeDate && /^\d{4}-\d{2}-\d{2}$/.test(routeDate)) {
+    state.scoresDate = routeDate;
+  } else if (!state.scoresDate) {
+    state.scoresDate = isoDateOnly();
+  }
+  const dateStr = state.scoresDate;
+
+  if (!state.scores[dateStr] && !state.scoresLoading[dateStr]) {
+    state.scoresLoading[dateStr] = true;
+    fetch(`/api/scores?date=${dateStr}`)
+      .then((response) => response.json())
+      .then((data) => {
+        state.scores[dateStr] = data.games || [];
+        state.scoresLoading[dateStr] = false;
+        if (state.scoresDate === dateStr) renderScoresPage();
+      })
+      .catch(() => {
+        state.scores[dateStr] = [];
+        state.scoresLoading[dateStr] = false;
+        if (state.scoresDate === dateStr) renderScoresPage();
+      });
+  }
+
+  const teams = teamMap();
+  const teamCell = (side) => {
+    const known = teams[side.abbr];
+    const logo = side.logo || known?.logo || "";
+    const name = known?.team || side.name || side.abbr;
+    const inner = `
+      ${logo ? `<img class="logo" src="${logo}" alt="" />` : ""}
+      <strong>${html(name)}</strong>
+      <span>${html(side.record || "")}</span>
+    `;
+    return known
+      ? `<a class="score-team${side.winner ? " winner" : ""}" href="#/teams/${known.slug}">${inner}</a>`
+      : `<div class="score-team${side.winner ? " winner" : ""}">${inner}</div>`;
+  };
+  const lineScoreTable = (game) => {
+    const away = game.away.linescores;
+    const home = game.home.linescores;
+    if (!away.length && !home.length) return "";
+    const periods = Math.max(away.length, home.length);
+    const heads = Array.from({ length: periods }, (_, i) => `<th>${i < 4 ? `Q${i + 1}` : `OT${i - 3}`}</th>`).join("");
+    const cells = (values) => Array.from({ length: periods }, (_, i) => `<td>${values[i] ?? "-"}</td>`).join("");
+    return `
+      <table class="linescore-table">
+        <thead><tr><th></th>${heads}<th>T</th></tr></thead>
+        <tbody>
+          <tr><td>${html(game.away.abbr)}</td>${cells(away)}<td><strong>${game.away.score ?? "-"}</strong></td></tr>
+          <tr><td>${html(game.home.abbr)}</td>${cells(home)}<td><strong>${game.home.score ?? "-"}</strong></td></tr>
+        </tbody>
+      </table>
+    `;
+  };
+  const scoreCard = (game) => {
+    const isLive = game.status_state === "in";
+    const isFinal = game.status_state === "post";
+    return `
+      <article class="score-card">
+        <div class="score-status${isLive ? " live" : ""}">${isLive ? "LIVE - " : ""}${html(isFinal ? "FINAL" : game.status_detail)}</div>
+        <div class="score-matchup">
+          ${teamCell(game.away)}
+          <div class="score-value">${game.away.score ?? "-"}</div>
+        </div>
+        <div class="score-matchup">
+          ${teamCell(game.home)}
+          <div class="score-value">${game.home.score ?? "-"}</div>
+        </div>
+        ${lineScoreTable(game)}
+      </article>
+    `;
+  };
+
+  const chips = Array.from({ length: 7 }, (_, i) => shiftIsoDate(dateStr, i - 3))
+    .map((iso) => `<button class="date-chip${iso === dateStr ? " active" : ""}" type="button" data-score-date="${iso}">${formatDateChip(iso)}</button>`)
+    .join("");
+
+  const heading = `
+    <div class="page-heading">
+      <div><h1>Scores</h1><p>Every NBA game, any date - final scores, line scores, and live status.</p></div>
+    </div>
+    <div class="date-strip">
+      <button class="date-nav-button" type="button" data-score-shift="-1" aria-label="Previous day">&lt;</button>
+      <div class="date-chip-row">${chips}</div>
+      <button class="date-nav-button" type="button" data-score-shift="1" aria-label="Next day">&gt;</button>
+      <button class="date-nav-button" type="button" data-score-date="${isoDateOnly()}">Today</button>
+    </div>
+  `;
+
+  const games = state.scores[dateStr];
+  if (!games) {
+    els.scoresPage.innerHTML = `${heading}<article class="panel"><p class="footer-note">Loading scores...</p></article>`;
+    return;
+  }
+  if (!games.length) {
+    els.scoresPage.innerHTML = `${heading}<article class="panel"><p class="footer-note">No games scheduled on this date.</p></article>`;
+    return;
+  }
+  els.scoresPage.innerHTML = `${heading}<div class="score-grid">${games.map(scoreCard).join("")}</div>`;
+}
+
 function renderModelPerformancePage() {
   if (!state.modelPerformance && !state.modelPerformanceLoading) {
     state.modelPerformanceLoading = true;
@@ -1373,6 +1500,19 @@ document.addEventListener("click", (event) => {
       terms,
       refresh: true,
     });
+    return;
+  }
+
+  const scoreShiftButton = event.target.closest("[data-score-shift]");
+  if (scoreShiftButton) {
+    state.scoresDate = shiftIsoDate(state.scoresDate || isoDateOnly(), Number(scoreShiftButton.dataset.scoreShift));
+    renderScoresPage();
+    return;
+  }
+  const scoreDateButton = event.target.closest("[data-score-date]");
+  if (scoreDateButton) {
+    state.scoresDate = scoreDateButton.dataset.scoreDate;
+    renderScoresPage();
   }
 });
 

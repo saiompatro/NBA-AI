@@ -327,6 +327,25 @@ a {
   background: currentColor;
 }
 
+.scores-icon::before {
+  content: "";
+  position: absolute;
+  inset: 4px 3px 3px;
+  border: 2px solid currentColor;
+  border-radius: 3px;
+}
+
+.scores-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 7px;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 0 4px 0 0 currentColor, 0 8px 0 0 currentColor;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -1981,6 +2000,137 @@ select {
   font-size: 0.74rem;
 }
 
+.date-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.date-chip-row {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  flex: 1;
+}
+
+.date-chip,
+.date-nav-button {
+  flex: 0 0 auto;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--ink);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.date-chip.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.date-nav-button:hover,
+.date-chip:hover {
+  border-color: var(--line-strong);
+}
+
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.score-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+
+.score-status {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 10px;
+}
+
+.score-status.live {
+  color: var(--red);
+}
+
+.score-matchup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.score-matchup:last-of-type {
+  border-bottom: none;
+}
+
+.score-team {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ink);
+  text-decoration: none;
+  min-width: 0;
+}
+
+.score-team strong {
+  font-size: 0.86rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.score-team span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  flex: 0 0 auto;
+}
+
+.score-team.winner strong {
+  color: var(--accent);
+}
+
+.score-value {
+  font-size: 1.1rem;
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.linescore-table {
+  width: 100%;
+  margin-top: 10px;
+  border-collapse: collapse;
+  font-size: 0.72rem;
+}
+
+.linescore-table th,
+.linescore-table td {
+  padding: 3px 6px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.linescore-table td:first-child,
+.linescore-table th:first-child {
+  text-align: left;
+  color: var(--ink);
+  font-weight: 700;
+}
+
 @media (max-width: 1180px) {
   .kpi-grid {
     grid-template-columns: repeat(2, 1fr);
@@ -2020,6 +2170,14 @@ select {
     display: flex;
     overflow-x: auto;
     gap: 8px;
+  }
+
+  .date-strip {
+    flex-wrap: nowrap;
+  }
+
+  .date-chip-row {
+    overflow-x: auto;
   }
 
   .side-link {

@@ -27,6 +27,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
 - **Playoff bracket** — series scores grouped by conference and round (First Round / Conf. Semifinals / Conf. Finals / NBA Finals), sourced from the same live `scoreboardv3` series data the standings already computed but the UI never surfaced
 - **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder), plus the shot-quality model's R²/MAE on a synthetic holdout (labeled as such — there's no real-shot ground truth to backtest against)
+- **Scores page** — a date-navigable league scoreboard (every ESPN/NBA.com/CBS Sports competitor's front door, which this app never had): final/live/scheduled games for any date with per-quarter line scores, records, and a date strip to page backward/forward or jump straight to today
 
 ## Tech Stack
 
@@ -108,6 +109,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/players/<id>/game-log`                                  | Real last-10 boxscore log for a player (playoffs, falling back to regular season) |
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
+| GET    | `/api/scores?date=YYYY-MM-DD`                                 | Full-league scores for one date (defaults to today), with line scores |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
 | GET    | `/api/model-performance`                                      | Backtested accuracy/log-loss for the pre-game model |
 | GET    | `/api/game-prediction?away=DET&home=CLE`                      | Matchup prediction with plain-English summary |
@@ -130,6 +132,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/players/<slug>-<id>` | Player profile       |
 | `#/teams`               | Team list            |
 | `#/teams/<slug>`        | Team profile         |
+| `#/scores`              | Date-navigable scoreboard |
 | `#/predictions`         | Game prediction tool |
 | `#/compare`              | Player comparison    |
 | `#/power-rankings`      | Power rankings        |
