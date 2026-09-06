@@ -519,6 +519,110 @@ class LeagueAnalyticsService:
             "PlayerGameLog",
         )
 
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Shot chart + zone shooting splits vs. league average (NBA Stats
+        `shotchartdetail`), the analytics view nearly every competing NBA stats
+        site/dashboard ships (NBA.com Shooting tab, Basketball-Reference, Cleaning
+        the Glass) that this repo never surfaced despite already calling stats.nba.com."""
+        shots, league = self._shot_chart_frames(player_id, season, "Playoffs")
+        season_type = "Playoffs"
+        if shots.empty:
+            shots, league = self._shot_chart_frames(player_id, season, "Regular Season")
+            season_type = "Regular Season"
+        if shots.empty:
+            return {"season_type": None, "shots": [], "zones": [], "totals": None}
+
+        for column in ["LOC_X", "LOC_Y", "SHOT_MADE_FLAG", "SHOT_DISTANCE"]:
+            shots[column] = pd.to_numeric(shots[column], errors="coerce").fillna(0)
+
+        points = []
+        for row in shots.tail(600).to_dict("records"):
+            points.append(
+                {
+                    "x": float(row["LOC_X"]),
+                    "y": float(row["LOC_Y"]),
+                    "made": bool(row["SHOT_MADE_FLAG"]),
+                    "zone": str(row.get("SHOT_ZONE_BASIC", "")),
+                    "distance": float(row["SHOT_DISTANCE"]),
+                    "three": "3" in str(row.get("SHOT_TYPE", "")),
+                }
+            )
+
+        league_by_zone: dict[str, float] = {}
+        if not league.empty:
+            league["FG_PCT"] = pd.to_numeric(league["FG_PCT"], errors="coerce").fillna(0)
+            for row in league.to_dict("records"):
+                league_by_zone[str(row.get("SHOT_ZONE_BASIC", ""))] = float(row["FG_PCT"]) * 100
+
+        zones = []
+        made_total = 0
+        for zone, group in shots.groupby("SHOT_ZONE_BASIC"):
+            fga = int(len(group))
+            fgm = int(group["SHOT_MADE_FLAG"].sum())
+            made_total += fgm
+            fg_pct = round((fgm / fga) * 100, 1) if fga else 0.0
+            league_pct = round(league_by_zone.get(str(zone), 0.0), 1)
+            zones.append(
+                {
+                    "zone": str(zone),
+                    "fgm": fgm,
+                    "fga": fga,
+                    "fg_pct": fg_pct,
+                    "league_pct": league_pct,
+                    "delta": round(fg_pct - league_pct, 1),
+                }
+            )
+        zones.sort(key=lambda z: z["fga"], reverse=True)
+
+        total_fga = int(len(shots))
+        return {
+            "season_type": season_type,
+            "shots": points,
+            "zones": zones,
+            "totals": {
+                "fgm": made_total,
+                "fga": total_fga,
+                "fg_pct": round((made_total / total_fga) * 100, 1) if total_fga else 0.0,
+            },
+        }
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        params = {
+            "PlayerID": player_id,
+            "TeamID": "0",
+            "GameID": "",
+            "ContextMeasure": "FGA",
+            "Season": season,
+            "SeasonType": season_type,
+            "LeagueID": "00",
+            "PlayerPosition": "",
+            "DateFrom": "",
+            "DateTo": "",
+            "GameSegment": "",
+            "LastNGames": "0",
+            "Location": "",
+            "Month": "0",
+            "OpponentTeamID": "0",
+            "Outcome": "",
+            "Period": "0",
+            "Position": "",
+            "RookieYear": "",
+            "SeasonSegment": "",
+            "StartPeriod": "",
+            "EndPeriod": "",
+            "StartRange": "",
+            "EndRange": "",
+            "RangeType": "",
+            "AheadBehind": "",
+            "ClutchTime": "",
+            "PointDiff": "",
+            "ContextFilter": "",
+            "VsConference": "",
+            "VsDivision": "",
+        }
+        return self._stats_frames("shotchartdetail", params, ("Shot_Chart_Detail", "LeagueAverages"))
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()
@@ -1133,6 +1237,25 @@ class LeagueAnalyticsService:
         }
 
     def _stats_frame(self, endpoint: str, params: dict[str, Any], result_name: str) -> pd.DataFrame:
+        result_sets = self._stats_result_sets(endpoint, params)
+        if not result_sets:
+            return pd.DataFrame()
+        selected = next((item for item in result_sets if item.get("name") == result_name), result_sets[0])
+        return pd.DataFrame(selected.get("rowSet", []), columns=selected.get("headers", []))
+
+    def _stats_frames(self, endpoint: str, params: dict[str, Any], result_names: tuple[str, ...]) -> tuple[pd.DataFrame, ...]:
+        """Like `_stats_frame` but pulls several named result sets out of a single
+        request - `shotchartdetail` returns both the shot log and the league-average
+        zone table in one response, so there's no reason to hit the endpoint twice."""
+        result_sets = self._stats_result_sets(endpoint, params)
+        by_name = {item.get("name"): item for item in result_sets}
+        frames = []
+        for name in result_names:
+            item = by_name.get(name)
+            frames.append(pd.DataFrame(item.get("rowSet", []), columns=item.get("headers", [])) if item else pd.DataFrame())
+        return tuple(frames)
+
+    def _stats_result_sets(self, endpoint: str, params: dict[str, Any]) -> list[dict[str, Any]]:
         try:
             response = requests.get(
                 f"https://stats.nba.com/stats/{endpoint}",
@@ -1142,11 +1265,9 @@ class LeagueAnalyticsService:
                 verify=False,
             )
             response.raise_for_status()
-            result_sets = response.json().get("resultSets", [])
-            selected = next((item for item in result_sets if item.get("name") == result_name), result_sets[0])
-            return pd.DataFrame(selected.get("rowSet", []), columns=selected.get("headers", []))
+            return response.json().get("resultSets", [])
         except Exception:
-            return pd.DataFrame()
+            return []
 
     @lru_cache(maxsize=16)
     def _espn_scoreboard(self, game_date: date) -> list[dict[str, Any]]:

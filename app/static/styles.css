@@ -1043,6 +1043,57 @@ td {
   stroke: var(--accent);
 }
 
+.shot-chart-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+.shot-chart-court-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.shot-chart-svg {
+  width: 100%;
+  aspect-ratio: 500 / 480;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.shot-chart-svg .court-line {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 2;
+}
+
+.shot-chart-svg .shot-made {
+  fill: var(--green);
+  fill-opacity: 0.85;
+}
+
+.shot-chart-svg .shot-missed {
+  fill: none;
+  stroke: var(--red);
+  stroke-width: 1.6;
+  opacity: 0.85;
+}
+
+.shot-chart-caption {
+  text-align: center;
+  margin: 0;
+}
+
+@media (max-width: 780px) {
+  .shot-chart-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 .shot-quality-meter > div {
   grid-column: 1 / -1;
 }
