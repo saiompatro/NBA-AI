@@ -519,6 +519,92 @@ class LeagueAnalyticsService:
             "PlayerGameLog",
         )
 
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Real shot-location scatter + zone efficiency vs league average, for the
+        per-player shot chart panel. Playoffs first with a regular-season fallback,
+        same rationale as `player_game_log` above (off-season gap between a player's
+        team getting eliminated and the next tip-off)."""
+        unavailable = {
+            "available": False,
+            "season_type": "",
+            "total_fga": 0,
+            "total_fgm": 0,
+            "fg_pct": 0,
+            "zones": [],
+            "shots": [],
+        }
+        detail_frame, league_frame = self._shot_chart_frame(player_id, season, "Playoffs")
+        season_type = "Playoffs"
+        if detail_frame.empty:
+            detail_frame, league_frame = self._shot_chart_frame(player_id, season, "Regular Season")
+            season_type = "Regular Season"
+        if detail_frame.empty:
+            return unavailable
+
+        try:
+            shots_raw = detail_frame.to_dict("records")
+            league_raw = league_frame.to_dict("records")
+            zones = aggregate_shot_zones(shots_raw, league_raw)
+            shots = shot_points(shots_raw)
+
+            made_flags = pd.to_numeric(detail_frame.get("SHOT_MADE_FLAG"), errors="coerce").fillna(0)
+            attempted_flags = pd.to_numeric(detail_frame.get("SHOT_ATTEMPTED_FLAG"), errors="coerce").fillna(0)
+            total_fga = int(attempted_flags.sum())
+            total_fgm = int(made_flags.sum())
+            fg_pct = round((total_fgm / total_fga) * 100, 1) if total_fga else 0
+
+            return {
+                "available": True,
+                "season_type": season_type,
+                "total_fga": total_fga,
+                "total_fgm": total_fgm,
+                "fg_pct": fg_pct,
+                "zones": zones,
+                "shots": shots,
+            }
+        except Exception:
+            return unavailable
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frame(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        # Built directly rather than via `common_dash_params`, which is shaped for the
+        # leaguedash* endpoints - shotchartdetail needs its own, much larger, param set.
+        params = {
+            "PlayerID": player_id,
+            "TeamID": 0,
+            "GameID": "",
+            "Season": season,
+            "SeasonType": season_type,
+            "ContextMeasure": "FGA",
+            "LeagueID": "00",
+            "Period": 0,
+            "LastNGames": 0,
+            "Month": 0,
+            "OpponentTeamID": 0,
+            "RangeType": 0,
+            "StartPeriod": 1,
+            "EndPeriod": 10,
+            "StartRange": 0,
+            "EndRange": 28800,
+            "Outcome": "",
+            "Location": "",
+            "SeasonSegment": "",
+            "DateFrom": "",
+            "DateTo": "",
+            "VsConference": "",
+            "VsDivision": "",
+            "Position": "",
+            "RookieYear": "",
+            "GameSegment": "",
+            "ClutchTime": "",
+            "AheadBehind": "",
+            "PointDiff": "",
+            "PlayerPosition": "",
+        }
+        detail_frame = self._stats_frame("shotchartdetail", params, "Shot_Chart_Detail")
+        league_frame = self._stats_frame("shotchartdetail", params, "LeagueAverages")
+        return detail_frame, league_frame
+
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         session = requests.Session()
@@ -1464,6 +1550,121 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+# ---------------------------------------------------------------------------
+# Shot chart (per-player shot-location scatter + zone efficiency vs league avg)
+# ---------------------------------------------------------------------------
+# Deliberately excludes "Backcourt" heaves - they're not a real shot-selection zone,
+# just half-court/buzzer desperation attempts that would skew share% for nothing.
+SHOT_ZONE_ORDER = [
+    "Restricted Area", "In The Paint (Non-RA)", "Mid-Range",
+    "Left Corner 3", "Right Corner 3", "Above the Break 3",
+]
+
+_THREE_POINT_ZONES = {"Left Corner 3", "Right Corner 3", "Above the Break 3"}
+
+
+def aggregate_shot_zones(shots: list[dict[str, Any]], league_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Per-zone FGA/FG%/points-per-shot for a player's shots, benchmarked against
+    league-average FG% for the same zone. `shots` are shotchartdetail Shot_Chart_Detail
+    rows; `league_rows` are shotchartdetail LeagueAverages rows, which split each
+    SHOT_ZONE_BASIC across multiple SHOT_ZONE_AREA rows - those must be pooled
+    (FGM/FGA summed) before computing a league FG%, never averaged as percentages."""
+    if not shots:
+        return []
+
+    zone_totals: dict[str, dict[str, int]] = {}
+    for shot in shots:
+        zone = shot.get("SHOT_ZONE_BASIC")
+        if not zone or zone == "Backcourt":
+            continue
+        bucket = zone_totals.setdefault(zone, {"fga": 0, "fgm": 0})
+        try:
+            made = int(float(shot.get("SHOT_MADE_FLAG", 0) or 0))
+        except (TypeError, ValueError):
+            made = 0
+        bucket["fga"] += 1
+        bucket["fgm"] += made
+
+    if not zone_totals:
+        return []
+
+    league_totals: dict[str, dict[str, int]] = {}
+    for row in league_rows or []:
+        zone = row.get("SHOT_ZONE_BASIC")
+        if not zone:
+            continue
+        bucket = league_totals.setdefault(zone, {"fga": 0, "fgm": 0})
+        try:
+            bucket["fga"] += int(float(row.get("FGA", 0) or 0))
+            bucket["fgm"] += int(float(row.get("FGM", 0) or 0))
+        except (TypeError, ValueError):
+            continue
+
+    total_fga = sum(bucket["fga"] for bucket in zone_totals.values())
+
+    results = []
+    for zone in SHOT_ZONE_ORDER:
+        bucket = zone_totals.get(zone)
+        if not bucket or bucket["fga"] <= 0:
+            continue
+        fga = bucket["fga"]
+        fgm = bucket["fgm"]
+        is_three = zone in _THREE_POINT_ZONES
+        fg_pct = round((fgm / fga) * 100, 1)
+        pps = round((fgm * (3 if is_three else 2)) / fga, 2)
+        share = round((fga / total_fga) * 100, 1) if total_fga else 0.0
+
+        league_bucket = league_totals.get(zone)
+        league_pct = 0.0
+        if league_bucket and league_bucket["fga"] > 0:
+            league_pct = round((league_bucket["fgm"] / league_bucket["fga"]) * 100, 1)
+
+        results.append(
+            {
+                "zone": zone,
+                "fga": fga,
+                "fgm": fgm,
+                "fg_pct": fg_pct,
+                "is_three": is_three,
+                "pps": pps,
+                "share": share,
+                "league_pct": league_pct,
+                "delta": round(fg_pct - league_pct, 1),
+            }
+        )
+    return results
+
+
+def shot_points(shots: list[dict[str, Any]], limit: int = 500) -> list[dict[str, Any]]:
+    """Plot-ready (x, y, made, distance) points for the half-court SVG scatter,
+    dropping backcourt heaves and evenly downsampling (not truncating) so a long
+    game log still shows a representative spread across the full season."""
+    points: list[dict[str, Any]] = []
+    for shot in shots or []:
+        try:
+            loc_y = float(shot.get("LOC_Y"))
+            if loc_y > 400:
+                continue
+            point = {
+                "x": int(float(shot.get("LOC_X"))),
+                "y": int(loc_y),
+                "made": bool(int(float(shot.get("SHOT_MADE_FLAG", 0) or 0))),
+                "d": int(float(shot.get("SHOT_DISTANCE", 0) or 0)),
+            }
+        except (TypeError, ValueError):
+            continue
+        points.append(point)
+
+    if len(points) <= limit or limit <= 0:
+        return points
+
+    # Evenly spaced stride so the sample stays representative of the whole game log
+    # rather than just the earliest games.
+    step = len(points) / limit
+    sampled = [points[int(i * step)] for i in range(limit)]
+    return sampled
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:

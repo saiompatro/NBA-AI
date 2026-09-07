@@ -724,6 +724,29 @@ a {
   overflow-x: auto;
 }
 
+.shot-court {
+  width: 100%;
+  max-width: 520px;
+  height: auto;
+  display: block;
+  margin: 0 auto 16px;
+  color: var(--line-strong);
+}
+
+.shot-made {
+  fill: var(--green);
+  fill-opacity: 0.85;
+  stroke: var(--surface);
+  stroke-width: 0.75;
+}
+
+.shot-miss {
+  fill: var(--red);
+  fill-opacity: 0.55;
+  stroke: var(--surface);
+  stroke-width: 0.75;
+}
+
 table {
   width: 100%;
   min-width: 620px;
