@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
-from math import exp
+from math import exp, log
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +96,26 @@ _CLUTCH_POINT_DIFF = "5"
 # factors (see `_advanced_team_stats`) but players were still raw per-game box totals -
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
+
+# Elo team-strength rating. Every edge above (four factors, home/road split, form) refines
+# a *season-average* net rating, but a season average treats a March win over a tanking
+# team the same as a January win over a contender and can't carry any signal across a
+# season boundary. FiveThirtyEight's NBA Elo (and Basketball-Reference's SRS) instead
+# replay every game chronologically, updating each team's rating by how much they won or
+# lost by *and* how good the opponent was at the time, with a fraction of each rating
+# carried into the next season. We already had the comment (see rest-days above) pointing
+# at 538's Elo as the industry reference; this actually builds it, from real leaguegamelog
+# results, as an independent second opinion on team strength blended alongside net rating.
+_ELO_INITIAL = 1500.0        # rating assigned to a team with no history
+_ELO_MEAN = 1505.0           # long-run league-average rating (538's NBA constant)
+_ELO_K = 20.0                # base update size per game (538's NBA K-factor)
+_ELO_HOME_ADVANTAGE = 100.0  # Elo-point home-court bump folded into the win-prob used for updates
+_ELO_MOV_DIVISOR = 2.2       # margin-of-victory multiplier divisor (538's NBA constant)
+_ELO_SEASON_CARRYOVER = 0.75  # fraction of a rating kept across a season boundary (25% reverts to mean)
+_ELO_SEASONS_OF_HISTORY = 3   # how many seasons back to replay before trusting the rating
+_ELO_POINTS_PER_MARGIN = 25.0  # empirical NBA conversion: ~25 Elo points ~= 1 pt of scoring margin
+_ELO_EDGE_WEIGHT = 0.5        # Elo is a second opinion alongside net rating, not a replacement
+_ELO_EDGE_CAP = 3.0           # hard cap on total margin swing from the Elo signal
 
 
 @lru_cache(maxsize=1)
@@ -201,7 +221,8 @@ class LeagueAnalyticsService:
                 "rest / back-to-back fatigue",
                 "recent form (last-10)",
                 "home/road net rating split",
-                "four factors (eFG%, TOV%)",
+                "four factors (eFG%, TOV%, OREB%, FT rate)",
+                "Elo rating (538 methodology, replayed from real results)",
                 "news sentiment (context only, not scored)",
             ],
         }
@@ -390,6 +411,81 @@ class LeagueAnalyticsService:
                 if team_id in TEAM_BY_ID:
                     splits[key][team_id] = float(row["PLUS_MINUS"])
         return splits
+
+    @lru_cache(maxsize=4)
+    def _elo_ratings(self, season: str) -> dict[int, float]:
+        """Elo rating per team, replayed game-by-game from real results over the last
+        `_ELO_SEASONS_OF_HISTORY` seasons (538 NBA Elo methodology). Falls back to an
+        empty dict (treated as a neutral 1500 for every team) if the Stats API is
+        unreachable, matching the other pre-game adjustments' fail-open behavior."""
+        start_year = int(season.split("-")[0])
+        seasons = [f"{year}-{str(year + 1)[-2:]}" for year in range(start_year - _ELO_SEASONS_OF_HISTORY + 1, start_year + 1)]
+
+        ratings: dict[int, float] = {}
+        for season_index, season_label in enumerate(seasons):
+            if season_index > 0:
+                ratings = {team_id: regress_elo_to_mean(elo) for team_id, elo in ratings.items()}
+
+            games = self._season_games_chronological(season_label)
+            for game in games:
+                home_id, away_id = game["home_id"], game["away_id"]
+                home_elo = ratings.get(home_id, _ELO_INITIAL)
+                away_elo = ratings.get(away_id, _ELO_INITIAL)
+                ratings[home_id], ratings[away_id] = elo_game_update(
+                    home_elo, away_elo, game["home_pts"], game["away_pts"]
+                )
+        return ratings
+
+    def _season_games_chronological(self, season: str) -> list[dict[str, Any]]:
+        """Completed regular-season games for `season`, oldest first, as
+        {home_id, away_id, home_pts, away_pts}. Used to replay Elo history."""
+        frame = self._stats_frame(
+            "leaguegamelog",
+            {
+                "LeagueID": "00",
+                "Season": season,
+                "SeasonType": "Regular Season",
+                "PlayerOrTeam": "T",
+                "Sorter": "DATE",
+                "Direction": "ASC",
+                "Counter": "1000",
+                "DateFrom": "",
+                "DateTo": "",
+            },
+            "LeagueGameLog",
+        )
+        if frame.empty or "GAME_ID" not in frame:
+            return []
+
+        by_game: dict[str, dict[str, dict[str, Any]]] = {}
+        for row in frame.to_dict("records"):
+            matchup = str(row.get("MATCHUP", ""))
+            try:
+                team_id = int(row["TEAM_ID"])
+                pts = float(row["PTS"])
+            except (TypeError, ValueError, KeyError):
+                continue
+            side = "home" if "vs." in matchup else "away"
+            by_game.setdefault(str(row["GAME_ID"]), {})[side] = {
+                "team_id": team_id,
+                "pts": pts,
+                "date": str(row.get("GAME_DATE", "")),
+            }
+
+        games = []
+        for sides in by_game.values():
+            if "home" in sides and "away" in sides:
+                games.append(
+                    {
+                        "home_id": sides["home"]["team_id"],
+                        "away_id": sides["away"]["team_id"],
+                        "home_pts": sides["home"]["pts"],
+                        "away_pts": sides["away"]["pts"],
+                        "date": sides["home"]["date"],
+                    }
+                )
+        games.sort(key=lambda g: g["date"])
+        return games
 
     def playoff_players(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
@@ -836,9 +932,17 @@ class LeagueAnalyticsService:
             float(home.get("ftr", 0)), float(away.get("ftr", 0)),
         )
 
+        try:
+            elo_ratings = self._elo_ratings(season)
+        except Exception:
+            elo_ratings = {}
+        home_elo = elo_ratings.get(int(home["team_id"]), _ELO_INITIAL)
+        away_elo = elo_ratings.get(int(away["team_id"]), _ELO_INITIAL)
+        elo_edge = elo_strength_edge(home_elo, away_elo)
+
         expected_home_margin = (
             (home_net - away_net) + hca - home_injury_pts + away_injury_pts
-            + rest_edge + form_edge + split_edge + ff_edge
+            + rest_edge + form_edge + split_edge + ff_edge + elo_edge
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -907,6 +1011,20 @@ class LeagueAnalyticsService:
             where = "at home" if winner["abbr"] == home["abbr"] else "on the road"
             summary_parts.append(
                 f"{winner['abbr']} also plays better {where} than their season number alone suggests, adding a bit more edge."
+            )
+
+        winner_elo = home_elo if winner["abbr"] == home["abbr"] else away_elo
+        loser_elo = away_elo if winner["abbr"] == home["abbr"] else home_elo
+        winner_elo_edge = elo_edge if winner["abbr"] == home["abbr"] else -elo_edge
+        if winner_elo_edge >= 0.3:
+            summary_parts.append(
+                f"{winner['abbr']}'s Elo rating ({round(winner_elo)} vs. {loser['abbr']}'s {round(loser_elo)}), "
+                f"built from every result this season and last, also backs the pick."
+            )
+        elif winner_elo_edge <= -0.3:
+            summary_parts.append(
+                f"Elo actually favors {loser['abbr']} ({round(loser_elo)} vs. {round(winner_elo)}) based on the "
+                f"full game-by-game history, so the pick leans more on the other factors here."
             )
 
         winner_ff_edge = ff_edge if winner["abbr"] == home["abbr"] else -ff_edge
@@ -1006,6 +1124,12 @@ class LeagueAnalyticsService:
                 },
                 "margin_edge": round(ff_edge, 2),
             },
+            "elo": {
+                "home": {"abbr": home["abbr"], "rating": round(home_elo)},
+                "away": {"abbr": away["abbr"], "rating": round(away_elo)},
+                "margin_edge": round(elo_edge, 2),
+                "note": f"Replayed from real results over the last {_ELO_SEASONS_OF_HISTORY} seasons (538 NBA Elo methodology).",
+            },
             "calibration": {
                 "home_court_advantage": round(hca, 2),
                 "scale": round(scale, 2),
@@ -1029,6 +1153,7 @@ class LeagueAnalyticsService:
                     "opponent": f"{loser.get('efg_pct', 0):.1f}% eFG, {loser.get('tov_pct', 0):.1f}% TOV, {loser.get('oreb_pct', 0):.1f}% OREB, {loser.get('ftr', 0):.1f}% FTr",
                 },
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
+                {"label": "Elo rating", "winner": round(winner_elo), "opponent": round(loser_elo)},
             ],
             "generated_at": datetime.now(timezone.utc).isoformat(),
         }
@@ -1513,6 +1638,56 @@ def four_factors_edge(
     ftr_edge = (home_ftr - away_ftr) * _FOUR_FACTORS_FTR_WEIGHT
     edge = efg_edge + tov_edge + oreb_edge + ftr_edge
     return max(-_FOUR_FACTORS_CAP, min(_FOUR_FACTORS_CAP, edge))
+
+
+def elo_win_probability(
+    home_elo: float, away_elo: float, home_advantage: float = _ELO_HOME_ADVANTAGE
+) -> float:
+    """Standard Elo win-probability formula (538's NBA convention), with the home
+    team's rating bumped by `home_advantage` before comparing the two sides."""
+    diff = (home_elo + home_advantage) - away_elo
+    return 1.0 / (1.0 + 10 ** (-diff / 400.0))
+
+
+def elo_game_update(
+    home_elo: float,
+    away_elo: float,
+    home_pts: float,
+    away_pts: float,
+    k: float = _ELO_K,
+    home_advantage: float = _ELO_HOME_ADVANTAGE,
+) -> tuple[float, float]:
+    """Replay one completed game and return the (home, away) Elo ratings afterward.
+
+    Uses 538's NBA margin-of-victory multiplier so a 30-point win moves the rating
+    more than a 1-point win, and an upset (beating a much stronger team) moves it
+    more than a win over a team you were already expected to beat."""
+    home_win_prob = elo_win_probability(home_elo, away_elo, home_advantage)
+    home_result = 1.0 if home_pts > away_pts else 0.0
+
+    margin = abs(home_pts - away_pts)
+    elo_diff_for_winner = (home_elo - away_elo) if home_result else (away_elo - home_elo)
+    mov_multiplier = log(margin + 1) * (2.2 / (elo_diff_for_winner * 0.001 + _ELO_MOV_DIVISOR))
+    mov_multiplier = max(mov_multiplier, 0.5)  # never let a lopsided upset invert the update
+
+    shift = k * mov_multiplier * (home_result - home_win_prob)
+    return home_elo + shift, away_elo - shift
+
+
+def regress_elo_to_mean(
+    elo: float, mean: float = _ELO_MEAN, carryover: float = _ELO_SEASON_CARRYOVER
+) -> float:
+    """Carry a team's rating into a new season, reverting part of it toward the
+    league mean (538's NBA convention) so an outlier season fades over time instead
+    of anchoring a team's rating forever."""
+    return elo * carryover + mean * (1 - carryover)
+
+
+def elo_strength_edge(home_elo: float, away_elo: float) -> float:
+    """Points of home margin implied by the Elo gap between two teams, expressed as
+    a small, capped nudge alongside (not instead of) the season net-rating edge."""
+    edge = (home_elo - away_elo) / _ELO_POINTS_PER_MARGIN * _ELO_EDGE_WEIGHT
+    return max(-_ELO_EDGE_CAP, min(_ELO_EDGE_CAP, edge))
 
 
 def simulated_last10(wins: int, losses: int) -> str:
