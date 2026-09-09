@@ -27,6 +27,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
 - **Playoff bracket** — series scores grouped by conference and round (First Round / Conf. Semifinals / Conf. Finals / NBA Finals), sourced from the same live `scoreboardv3` series data the standings already computed but the UI never surfaced
 - **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder), plus the shot-quality model's R²/MAE on a synthetic holdout (labeled as such — there's no real-shot ground truth to backtest against)
+- **League Efficiency Landscape** — quadrant scatter chart plotting all 16 playoff teams by Off/Def Rating, eFG%/TOV%, OREB%/FT Rate, or Pace/Net Rating, with dashed league-average crosshairs, clickable team-logo markers, an East/West/All conference filter, and a sortable data table for accessibility
 
 ## Tech Stack
 
@@ -133,6 +134,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/predictions`         | Game prediction tool |
 | `#/compare`              | Player comparison    |
 | `#/power-rankings`      | Power rankings        |
+| `#/landscape`            | League efficiency landscape |
 | `#/bracket`              | Playoff bracket        |
 | `#/model`               | Model accuracy         |
 | `#/alerts`              | News alerts          |

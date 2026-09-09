@@ -327,6 +327,26 @@ a {
   background: currentColor;
 }
 
+.scatter-icon::before {
+  content: "";
+  position: absolute;
+  inset: 3px 4px 4px;
+  border-left: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+}
+
+.scatter-icon::after {
+  content: "";
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 8px -9px 0 0 currentColor, 3px -3px 0 0 currentColor, 12px -4px 0 0 currentColor;
+  left: 5px;
+  top: 12px;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -1041,6 +1061,131 @@ td {
 
 .wp-chart-line {
   stroke: var(--accent);
+}
+
+.landscape-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.landscape-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.landscape-segmented {
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 0;
+  min-width: 420px;
+}
+
+.landscape-conf-segmented {
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 0;
+  min-width: 180px;
+}
+
+.landscape-chart-card {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  grid-template-rows: 1fr 20px;
+  grid-template-areas:
+    "ylabel chart"
+    ". xlabel";
+  gap: 6px 10px;
+}
+
+.landscape-axis-y {
+  grid-area: ylabel;
+  align-self: center;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.landscape-axis-x {
+  grid-area: xlabel;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.landscape-chart-svg-wrap {
+  grid-area: chart;
+  min-width: 0;
+}
+
+.landscape-svg {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 720 / 460;
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.landscape-plot-area {
+  fill: none;
+  stroke: var(--line);
+}
+
+.landscape-crosshair {
+  stroke: var(--line-strong);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 5;
+}
+
+.landscape-quadrant-label {
+  fill: var(--subtle);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.landscape-marker {
+  cursor: pointer;
+}
+
+.landscape-marker circle {
+  transition: r 0.12s ease;
+}
+
+.landscape-marker:hover circle,
+.landscape-marker:focus circle {
+  r: 15;
+}
+
+.landscape-table th:last-child,
+.landscape-table td:last-child {
+  color: var(--muted);
+}
+
+.landscape-sort-th {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  cursor: pointer;
+}
+
+.landscape-sort-th:hover {
+  color: var(--ink);
 }
 
 .shot-quality-meter > div {
@@ -2107,6 +2252,24 @@ select {
   .card-stats,
   .detector-stats {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .landscape-controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .landscape-segmented,
+  .landscape-conf-segmented {
+    min-width: 0;
+  }
+
+  .landscape-svg {
+    aspect-ratio: 4 / 5;
+  }
+
+  .landscape-quadrant-label {
+    display: none;
   }
 }
 

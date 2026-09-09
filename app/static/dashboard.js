@@ -15,6 +15,7 @@ const state = {
   powerRankingsLoading: false,
   bracket: null,
   bracketLoading: false,
+  landscape: { preset: "efficiency", conference: "ALL", sortKey: null, sortDir: "desc" },
   modelPerformance: null,
   modelPerformanceLoading: false,
   shotQuality: null,
@@ -47,6 +48,7 @@ const els = {
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
+  landscapePage: document.getElementById("landscapePage"),
   bracketPage: document.getElementById("bracketPage"),
   modelPerformancePage: document.getElementById("modelPerformancePage"),
   settingsPage: document.getElementById("settingsPage"),
@@ -175,6 +177,11 @@ function route() {
   if (section === "power-rankings") {
     renderPowerRankingsPage();
     setActivePage("powerRankingsPage", "power-rankings");
+    return;
+  }
+  if (section === "landscape") {
+    renderLandscapePage();
+    setActivePage("landscapePage", "landscape");
     return;
   }
   if (section === "bracket") {
@@ -1061,6 +1068,237 @@ function renderPowerRankingsPage() {
   `;
 }
 
+const LANDSCAPE_PRESETS = [
+  {
+    id: "efficiency",
+    label: "Off / Def Rtg",
+    xKey: "off_rtg",
+    yKey: "def_rtg",
+    xLabel: "Offensive Rating",
+    yLabel: "Defensive Rating",
+    xFormat: "rating",
+    yFormat: "rating",
+    invertY: true,
+    quadrantLabels: ["Elite Two-Way", "Defense-First", "High-Powered, Leaky", "Struggling Both Ends"],
+  },
+  {
+    id: "four-factors",
+    label: "eFG% / TOV%",
+    xKey: "efg_pct",
+    yKey: "tov_pct",
+    xLabel: "Effective FG%",
+    yLabel: "Turnover%",
+    xFormat: "pct",
+    yFormat: "pct",
+    invertY: true,
+    quadrantLabels: ["Efficient & Careful", "Conservative Shooters", "Live By The Three", "Turnover Prone"],
+  },
+  {
+    id: "rebounding",
+    label: "OREB% / FT Rate",
+    xKey: "oreb_pct",
+    yKey: "ftr",
+    xLabel: "Offensive Rebound%",
+    yLabel: "Free Throw Rate",
+    xFormat: "pct",
+    yFormat: "pct",
+    invertY: false,
+    quadrantLabels: ["Attacks The Paint", "Drive & Kick", "Glass Crashers", "Jump-Shot Reliant"],
+  },
+  {
+    id: "pace-net",
+    label: "Pace / Net Rtg",
+    xKey: "pace",
+    yKey: "net",
+    xLabel: "Pace",
+    yLabel: "Net Rating",
+    xFormat: "rating",
+    yFormat: "rating",
+    invertY: false,
+    quadrantLabels: ["Fast & Dominant", "Slow & Steady", "Chaotic", "Grinding It Out"],
+  },
+];
+
+const LANDSCAPE_CONFERENCES = [
+  ["ALL", "All"],
+  ["Eastern", "East"],
+  ["Western", "West"],
+];
+
+function formatLandscapeValue(value, format) {
+  const numeric = Number(value || 0);
+  return format === "pct" ? `${numeric.toFixed(1)}%` : numeric.toFixed(1);
+}
+
+function efficiencyScatter(teams, preset) {
+  if (!teams.length) return `<p class="footer-note">No teams match this filter.</p>`;
+
+  const w = 720;
+  const h = 460;
+  const pad = 46;
+  const innerW = w - pad * 2;
+  const innerH = h - pad * 2;
+
+  const xs = teams.map((team) => Number(team[preset.xKey] || 0));
+  const ys = teams.map((team) => Number(team[preset.yKey] || 0));
+  const xMin = Math.min(...xs);
+  const xMax = Math.max(...xs);
+  const yMin = Math.min(...ys);
+  const yMax = Math.max(...ys);
+  const xPad = Math.max((xMax - xMin) * 0.08, 0.5);
+  const yPad = Math.max((yMax - yMin) * 0.08, 0.5);
+  const xLo = xMin - xPad;
+  const xHi = xMax + xPad;
+  const yLo = yMin - yPad;
+  const yHi = yMax + yPad;
+  const xRange = Math.max(xHi - xLo, 0.001);
+  const yRange = Math.max(yHi - yLo, 0.001);
+
+  const avgX = xs.reduce((sum, value) => sum + value, 0) / xs.length;
+  const avgY = ys.reduce((sum, value) => sum + value, 0) / ys.length;
+
+  const xToPixel = (value) => pad + ((value - xLo) / xRange) * innerW;
+  const yToPixel = (value) => {
+    const ratio = (value - yLo) / yRange;
+    return preset.invertY ? pad + ratio * innerH : pad + (1 - ratio) * innerH;
+  };
+
+  const placed = [];
+  const points = teams.map((team) => {
+    let px = xToPixel(Number(team[preset.xKey] || 0));
+    let py = yToPixel(Number(team[preset.yKey] || 0));
+    let attempt = 0;
+    while (placed.some((point) => Math.hypot(point.x - px, point.y - py) < 20) && attempt < 12) {
+      const angle = attempt * 1.05;
+      const radius = 12 + attempt * 3;
+      px += Math.cos(angle) * radius;
+      py += Math.sin(angle) * radius;
+      attempt += 1;
+    }
+    placed.push({ x: px, y: py });
+    return { team, x: px, y: py };
+  });
+
+  const avgXPixel = xToPixel(avgX);
+  const avgYPixel = yToPixel(avgY);
+
+  const [topRight, topLeft, bottomRight, bottomLeft] = preset.quadrantLabels;
+  const quadrants = `
+    <text x="${w - pad - 8}" y="${pad + 20}" class="landscape-quadrant-label" text-anchor="end">${html(topRight)}</text>
+    <text x="${pad + 8}" y="${pad + 20}" class="landscape-quadrant-label" text-anchor="start">${html(topLeft)}</text>
+    <text x="${w - pad - 8}" y="${h - pad - 10}" class="landscape-quadrant-label" text-anchor="end">${html(bottomRight)}</text>
+    <text x="${pad + 8}" y="${h - pad - 10}" class="landscape-quadrant-label" text-anchor="start">${html(bottomLeft)}</text>
+  `;
+
+  const markers = points.map(({ team, x, y }) => {
+    const xValue = formatLandscapeValue(team[preset.xKey], preset.xFormat);
+    const yValue = formatLandscapeValue(team[preset.yKey], preset.yFormat);
+    const tooltip = `${team.abbr} - ${preset.xLabel}: ${xValue}, ${preset.yLabel}: ${yValue}`;
+    const logo = team.logo
+      ? `<image href="${html(team.logo)}" x="${(x - 11).toFixed(1)}" y="${(y - 11).toFixed(1)}" width="22" height="22" />`
+      : "";
+    return `
+      <a href="#/teams/${team.slug}" class="landscape-marker">
+        <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="13" fill="${html(team.primary || "var(--accent)")}" stroke="var(--surface)" stroke-width="2" />
+        ${logo}
+        <title>${html(tooltip)}</title>
+      </a>
+    `;
+  }).join("");
+
+  return `
+    <svg class="landscape-svg" viewBox="0 0 ${w} ${h}" role="img" aria-label="Scatter chart of ${html(preset.xLabel)} versus ${html(preset.yLabel)}">
+      <rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" class="landscape-plot-area" />
+      <line x1="${avgXPixel.toFixed(1)}" y1="${pad}" x2="${avgXPixel.toFixed(1)}" y2="${h - pad}" class="landscape-crosshair" />
+      <line x1="${pad}" y1="${avgYPixel.toFixed(1)}" x2="${w - pad}" y2="${avgYPixel.toFixed(1)}" class="landscape-crosshair" />
+      ${quadrants}
+      ${markers}
+    </svg>
+  `;
+}
+
+function renderLandscapeTable(teams, preset) {
+  const sortKey = state.landscape.sortKey || preset.xKey;
+  const sortDir = state.landscape.sortDir || "desc";
+  const rows = [...teams].sort((a, b) => {
+    if (sortKey === "team") {
+      return sortDir === "asc" ? a.team.localeCompare(b.team) : b.team.localeCompare(a.team);
+    }
+    const av = Number(a[sortKey] || 0);
+    const bv = Number(b[sortKey] || 0);
+    return sortDir === "asc" ? av - bv : bv - av;
+  });
+
+  const arrow = (key) => (sortKey === key ? (sortDir === "asc" ? " ▲" : " ▼") : "");
+
+  return `
+    <div class="table-wrap">
+      <table class="landscape-table">
+        <thead>
+          <tr>
+            <th><button type="button" class="landscape-sort-th" data-landscape-sort="team">Team${arrow("team")}</button></th>
+            <th><button type="button" class="landscape-sort-th" data-landscape-sort="${preset.xKey}">${html(preset.xLabel)}${arrow(preset.xKey)}</button></th>
+            <th><button type="button" class="landscape-sort-th" data-landscape-sort="${preset.yKey}">${html(preset.yLabel)}${arrow(preset.yKey)}</button></th>
+            <th>Conference</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((team) => `
+            <tr>
+              <td>
+                <a class="team-cell" href="#/teams/${team.slug}">
+                  <img class="logo" src="${team.logo}" alt="" />
+                  <span>${html(team.team)}</span>
+                </a>
+              </td>
+              <td>${formatLandscapeValue(team[preset.xKey], preset.xFormat)}</td>
+              <td>${formatLandscapeValue(team[preset.yKey], preset.yFormat)}</td>
+              <td>${team.conference === "Eastern" ? "East" : "West"}</td>
+            </tr>
+          `).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderLandscapePage() {
+  const preset = LANDSCAPE_PRESETS.find((item) => item.id === state.landscape.preset) || LANDSCAPE_PRESETS[0];
+  const allTeams = state.analytics?.teams || [];
+  const teams = state.landscape.conference === "ALL"
+    ? allTeams
+    : allTeams.filter((team) => team.conference === state.landscape.conference);
+
+  els.landscapePage.innerHTML = `
+    <div class="page-heading">
+      <div>
+        <h1>League Efficiency Landscape</h1>
+        <p>All 16 playoff teams plotted two stats at a time, split into quadrants by the league average.</p>
+      </div>
+    </div>
+    <article class="panel landscape-panel">
+      <div class="landscape-controls">
+        <div class="segmented landscape-segmented" role="tablist" aria-label="Stat pair selector">
+          ${LANDSCAPE_PRESETS.map((item) => `
+            <button class="segment${item.id === preset.id ? " active" : ""}" type="button" data-landscape-preset="${item.id}">${html(item.label)}</button>
+          `).join("")}
+        </div>
+        <div class="segmented landscape-conf-segmented" role="tablist" aria-label="Conference filter">
+          ${LANDSCAPE_CONFERENCES.map(([value, label]) => `
+            <button class="segment${state.landscape.conference === value ? " active" : ""}" type="button" data-landscape-conf="${value}">${label}</button>
+          `).join("")}
+        </div>
+      </div>
+      <div class="landscape-chart-card">
+        <div class="landscape-axis-y">${html(preset.yLabel)}</div>
+        <div class="landscape-chart-svg-wrap">${efficiencyScatter(teams, preset)}</div>
+        <div class="landscape-axis-x">${html(preset.xLabel)}</div>
+      </div>
+      ${renderLandscapeTable(teams, preset)}
+    </article>
+  `;
+}
+
 const BRACKET_ROUND_ORDER = ["First Round", "Conf. Semifinals", "Conf. Finals"];
 
 function renderBracketPage() {
@@ -1373,6 +1611,33 @@ document.addEventListener("click", (event) => {
       terms,
       refresh: true,
     });
+    return;
+  }
+
+  const landscapePresetButton = event.target.closest("[data-landscape-preset]");
+  if (landscapePresetButton) {
+    state.landscape.preset = landscapePresetButton.dataset.landscapePreset;
+    renderLandscapePage();
+    return;
+  }
+
+  const landscapeConfButton = event.target.closest("[data-landscape-conf]");
+  if (landscapeConfButton) {
+    state.landscape.conference = landscapeConfButton.dataset.landscapeConf;
+    renderLandscapePage();
+    return;
+  }
+
+  const landscapeSortButton = event.target.closest("[data-landscape-sort]");
+  if (landscapeSortButton) {
+    const key = landscapeSortButton.dataset.landscapeSort;
+    if (state.landscape.sortKey === key) {
+      state.landscape.sortDir = state.landscape.sortDir === "asc" ? "desc" : "asc";
+    } else {
+      state.landscape.sortKey = key;
+      state.landscape.sortDir = key === "team" ? "asc" : "desc";
+    }
+    renderLandscapePage();
   }
 });
 
