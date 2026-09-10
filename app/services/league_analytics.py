@@ -836,9 +836,14 @@ class LeagueAnalyticsService:
             float(home.get("ftr", 0)), float(away.get("ftr", 0)),
         )
 
+        net_edge = home_net - away_net
         expected_home_margin = (
-            (home_net - away_net) + hca - home_injury_pts + away_injury_pts
+            net_edge + hca - home_injury_pts + away_injury_pts
             + rest_edge + form_edge + split_edge + ff_edge
+        )
+        margin_breakdown = margin_breakdown_rows(
+            home["abbr"], away["abbr"], net_edge, hca,
+            home_injury_pts, away_injury_pts, rest_edge, form_edge, split_edge, ff_edge,
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -1012,6 +1017,7 @@ class LeagueAnalyticsService:
                 "source": "fit to real game results" if _CALIBRATION_PATH.exists() else "default constants",
             },
             "data_quality": data_quality,
+            "margin_breakdown": margin_breakdown,
             "factors": [
                 {"label": "Team margin", "winner": round(winner_strength, 1), "opponent": round(loser_strength, 1)},
                 {"label": "Scoring", "winner": round(float(winner.get("pts", 0)), 1), "opponent": round(float(loser.get("pts", 0)), 1)},
@@ -1513,6 +1519,37 @@ def four_factors_edge(
     ftr_edge = (home_ftr - away_ftr) * _FOUR_FACTORS_FTR_WEIGHT
     edge = efg_edge + tov_edge + oreb_edge + ftr_edge
     return max(-_FOUR_FACTORS_CAP, min(_FOUR_FACTORS_CAP, edge))
+
+
+def margin_breakdown_rows(
+    home_abbr: str,
+    away_abbr: str,
+    net_edge: float,
+    hca: float,
+    home_injury_pts: float,
+    away_injury_pts: float,
+    rest_edge: float,
+    form_edge: float,
+    split_edge: float,
+    ff_edge: float,
+) -> list[dict[str, Any]]:
+    """Home-relative points-of-margin breakdown of every input the pre-game model sums,
+    in the same order `game_prediction` adds them. Every `points` value is signed so it
+    favors home when positive - a pure repackaging of numbers already computed there, so
+    the UI can render one waterfall regardless of who ends up favored."""
+    return [
+        {"label": "Team net rating", "points": round(net_edge, 1), "detail": f"{home_abbr} vs {away_abbr} season net rating"},
+        {"label": "Home court", "points": round(hca, 1), "detail": "Fixed home-court advantage"},
+        {
+            "label": "Availability",
+            "points": round(away_injury_pts - home_injury_pts, 1),
+            "detail": f"Injury-adjusted points lost, {home_abbr} vs {away_abbr}",
+        },
+        {"label": "Rest / schedule", "points": round(rest_edge, 1), "detail": "Back-to-back and rest-day fatigue"},
+        {"label": "Recent form", "points": round(form_edge, 1), "detail": "Last-10-game momentum"},
+        {"label": "Home/road split", "points": round(split_edge, 1), "detail": "Home vs. road net rating tendency"},
+        {"label": "Four factors", "points": round(ff_edge, 1), "detail": "eFG% / TOV% / OREB% / FT rate blend"},
+    ]
 
 
 def simulated_last10(wins: int, losses: int) -> str:

@@ -863,6 +863,40 @@ function renderAlertsPage() {
   `;
 }
 
+function marginBreakdown(result) {
+  const rows = result.margin_breakdown;
+  if (!rows || !rows.length) return "";
+  const max = Math.max(...rows.map((row) => Math.abs(Number(row.points) || 0)), 0.5);
+  const rowHtml = rows.map((row) => {
+    const points = Number(row.points) || 0;
+    const width = (Math.abs(points) / max) * 50;
+    const side = points >= 0 ? "home" : "away";
+    const left = points >= 0 ? 50 : 50 - width;
+    return `
+      <div class="mw-row">
+        <span>${html(row.label)}</span>
+        <div class="mw-track"><i class="mw-bar ${side}" style="width:${width}%;left:${left}%"></i></div>
+        <strong class="${points >= 0 ? "positive" : "concern"}">${points > 0 ? "+" : ""}${points.toFixed(1)}</strong>
+        <small>${html(row.detail || "")}</small>
+      </div>
+    `;
+  }).join("");
+  const home = result.home;
+  const margin = Number(result.expected_margin?.home ?? 0);
+  return `
+    <details class="margin-waterfall">
+      <summary>Why this pick</summary>
+      ${rowHtml}
+      <div class="mw-row mw-total">
+        <span>Expected margin (${html(home)})</span>
+        <div></div>
+        <strong>${margin > 0 ? "+" : ""}${margin.toFixed(1)}</strong>
+        <small>${html(result.calibration?.source || "")} &middot; ${html(result.data_quality || "")}</small>
+      </div>
+    </details>
+  `;
+}
+
 function renderPredictionResult(game, result) {
   if (!result) {
     return `<span class="prediction-pending">Run the model to see the pick</span>`;
@@ -884,6 +918,7 @@ function renderPredictionResult(game, result) {
       <div class="probability-row compact"><span>${html(game.away)}</span><div><i style="width:${awayPct}%"></i></div><strong>${awayPct}%</strong></div>
       <div class="probability-row compact"><span>${html(game.home)}</span><div><i style="width:${homePct}%"></i></div><strong>${homePct}%</strong></div>
       <p>${html(result.summary)}</p>
+      ${marginBreakdown(result)}
     </div>
   `;
 }
