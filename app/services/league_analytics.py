@@ -695,24 +695,24 @@ class LeagueAnalyticsService:
         for offset in range(0, 8):
             events = self._espn_scoreboard(today + timedelta(days=offset))
             for event in events:
-                competitions = event.get("competitions") or []
-                if not competitions:
-                    continue
-                competitors = competitions[0].get("competitors", [])
-                away = next((team for team in competitors if team.get("homeAway") == "away"), {})
-                home = next((team for team in competitors if team.get("homeAway") == "home"), {})
-                games.append(
-                    {
-                        "date": event.get("date", ""),
-                        "matchup": event.get("shortName") or event.get("name", ""),
-                        "away": away.get("team", {}).get("abbreviation", ""),
-                        "home": home.get("team", {}).get("abbreviation", ""),
-                        "status": event.get("status", {}).get("type", {}).get("shortDetail", "Scheduled"),
-                    }
-                )
+                game = _schedule_event_to_game(event)
+                if game:
+                    games.append(game)
             if len(games) >= 8:
                 break
         return games[:8] or fallback_upcoming_games()
+
+    def schedule_by_date(self, days_back: int = 1, days_ahead: int = 6) -> list[dict[str, Any]]:
+        """Games grouped by date, from `days_back` days ago through `days_ahead`
+        days out (inclusive), for the full schedule/calendar page."""
+        today = date.today()
+        days: list[dict[str, Any]] = []
+        for offset in range(-days_back, days_ahead + 1):
+            game_date = today + timedelta(days=offset)
+            events = self._espn_scoreboard(game_date)
+            games = [game for game in (_schedule_event_to_game(event) for event in events) if game]
+            days.append({"date": game_date.isoformat(), "games": games})
+        return days if any(day["games"] for day in days) else fallback_schedule()
 
     def _out_players_for_team(
         self, team_abbr: str, players: list[dict[str, Any]]
@@ -1417,6 +1417,28 @@ def normalize_espn_article(article: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _schedule_event_to_game(event: dict[str, Any]) -> dict[str, Any] | None:
+    """Convert one ESPN scoreboard event into a schedule-page/upcoming-games row."""
+    competitions = event.get("competitions") or []
+    if not competitions:
+        return None
+    competitors = competitions[0].get("competitors", [])
+    away = next((team for team in competitors if team.get("homeAway") == "away"), {})
+    home = next((team for team in competitors if team.get("homeAway") == "home"), {})
+    status_type = event.get("status", {}).get("type", {})
+    return {
+        "date": event.get("date", ""),
+        "matchup": event.get("shortName") or event.get("name", ""),
+        "away": away.get("team", {}).get("abbreviation", ""),
+        "home": home.get("team", {}).get("abbreviation", ""),
+        "away_score": int(away.get("score", 0) or 0),
+        "home_score": int(home.get("score", 0) or 0),
+        "status": status_type.get("shortDetail") or "Scheduled",
+        "state": status_type.get("state") or "pre",
+        "completed": bool(status_type.get("completed", False)),
+    }
+
+
 def games_back(team: dict[str, Any], teams: list[dict[str, Any]]) -> str:
     conference_teams = [row for row in teams if row["conference"] == team["conference"]]
     leader = max(conference_teams, key=lambda row: row["wins"] - row["losses"])
@@ -1599,6 +1621,20 @@ def fallback_upcoming_games() -> list[dict[str, Any]]:
         {"date": "2026-05-09T23:30Z", "matchup": "NYK @ BOS", "away": "NYK", "home": "BOS", "status": "Scheduled"},
         {"date": "2026-05-10T01:30Z", "matchup": "DEN @ OKC", "away": "DEN", "home": "OKC", "status": "Scheduled"},
         {"date": "2026-05-10T22:00Z", "matchup": "MIL @ CLE", "away": "MIL", "home": "CLE", "status": "Scheduled"},
+    ]
+
+
+def fallback_schedule() -> list[dict[str, Any]]:
+    today = date.today()
+    fallback_game = lambda **kwargs: {"away_score": 0, "home_score": 0, "status": "Scheduled", "state": "pre", "completed": False, **kwargs}
+    return [
+        {"date": today.isoformat(), "games": [
+            fallback_game(date="2026-05-09T23:30Z", matchup="NYK @ BOS", away="NYK", home="BOS"),
+            fallback_game(date="2026-05-10T01:30Z", matchup="DEN @ OKC", away="DEN", home="OKC"),
+        ]},
+        {"date": (today + timedelta(days=1)).isoformat(), "games": [
+            fallback_game(date="2026-05-10T22:00Z", matchup="MIL @ CLE", away="MIL", home="CLE"),
+        ]},
     ]
 
 

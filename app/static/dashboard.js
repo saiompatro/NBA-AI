@@ -15,6 +15,9 @@ const state = {
   powerRankingsLoading: false,
   bracket: null,
   bracketLoading: false,
+  schedule: null,
+  scheduleLoading: false,
+  scheduleDay: null,
   modelPerformance: null,
   modelPerformanceLoading: false,
   shotQuality: null,
@@ -48,6 +51,7 @@ const els = {
   comparePage: document.getElementById("comparePage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
   bracketPage: document.getElementById("bracketPage"),
+  schedulePage: document.getElementById("schedulePage"),
   modelPerformancePage: document.getElementById("modelPerformancePage"),
   settingsPage: document.getElementById("settingsPage"),
 };
@@ -180,6 +184,11 @@ function route() {
   if (section === "bracket") {
     renderBracketPage();
     setActivePage("bracketPage", "bracket");
+    return;
+  }
+  if (section === "schedule") {
+    renderSchedulePage();
+    setActivePage("schedulePage", "schedule");
     return;
   }
   if (section === "model") {
@@ -893,17 +902,17 @@ function runGamePrediction(button) {
   const away = button.dataset.away;
   const home = button.dataset.home;
   state.predictions[key] = { loading: true };
-  renderPredictionsPage();
+  route();
   const params = new URLSearchParams({ away, home });
   fetch(`/api/game-prediction?${params.toString()}`)
     .then((response) => response.json())
     .then((data) => {
       state.predictions[key] = data;
-      renderPredictionsPage();
+      route();
     })
     .catch(() => {
       state.predictions[key] = { ok: false, message: "The model could not run right now." };
-      renderPredictionsPage();
+      route();
     });
 }
 
@@ -1138,6 +1147,75 @@ function renderBracketPage() {
   els.bracketPage.innerHTML = `${heading}<div class="conference-grid">${conferences}</div>${finalsPanel}`;
 }
 
+function renderSchedulePage() {
+  if (!state.schedule && !state.scheduleLoading) {
+    state.scheduleLoading = true;
+    fetch("/api/schedule")
+      .then((response) => response.json())
+      .then((data) => {
+        state.schedule = data.schedule || [];
+        state.scheduleLoading = false;
+        renderSchedulePage();
+      })
+      .catch(() => {
+        state.schedule = [];
+        state.scheduleLoading = false;
+        renderSchedulePage();
+      });
+  }
+
+  const heading = `<div class="page-heading"><div><h1>Schedule</h1><p>Every game from yesterday through the week ahead, with the model one click away.</p></div></div>`;
+
+  if (!state.schedule) {
+    els.schedulePage.innerHTML = `${heading}<article class="panel"><p class="footer-note">Loading schedule...</p></article>`;
+    return;
+  }
+  if (!state.schedule.length) {
+    els.schedulePage.innerHTML = `${heading}<article class="panel"><p class="footer-note">No games scheduled.</p></article>`;
+    return;
+  }
+
+  const todayIso = new Date().toISOString().slice(0, 10);
+  if (!state.scheduleDay || !state.schedule.some((day) => day.date === state.scheduleDay)) {
+    state.scheduleDay = state.schedule.some((day) => day.date === todayIso) ? todayIso : state.schedule[0].date;
+  }
+
+  const dayTabs = state.schedule.map((day) => {
+    const label = new Date(`${day.date}T12:00:00`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+    return `<button type="button" class="schedule-day-tab ${day.date === state.scheduleDay ? "active" : ""}" data-schedule-day="${html(day.date)}">${day.date === todayIso ? "Today" : label}</button>`;
+  }).join("");
+
+  const active = state.schedule.find((day) => day.date === state.scheduleDay) || state.schedule[0];
+  const games = active.games || [];
+
+  const gameCards = games.length
+    ? games.map((game) => {
+        const key = predictionKey(game);
+        const result = state.predictions[key];
+        const rightSlot = game.completed
+          ? `<span class="schedule-score">${html(game.away)} ${game.away_score} - ${game.home_score} ${html(game.home)}</span>`
+          : `<button class="action-button" type="button" data-run-prediction data-prediction-key="${html(key)}" data-away="${html(game.away)}" data-home="${html(game.home)}">${result?.loading ? "Running..." : "Run Model"}</button>`;
+        return `
+          <div class="prediction-card">
+            <div class="prediction-card-top">
+              <span><strong>${html(game.matchup)}</strong><br /><small>${formatTime(game.date)} - ${html(game.status || "Scheduled")}</small></span>
+              ${rightSlot}
+            </div>
+            ${game.completed ? "" : renderPredictionResult(game, result)}
+          </div>
+        `;
+      }).join("")
+    : `<p class="footer-note">No games on this day.</p>`;
+
+  els.schedulePage.innerHTML = `
+    ${heading}
+    <article class="panel">
+      <div class="schedule-days">${dayTabs}</div>
+      <div class="prediction-list">${gameCards}</div>
+    </article>
+  `;
+}
+
 function renderModelPerformancePage() {
   if (!state.modelPerformance && !state.modelPerformanceLoading) {
     state.modelPerformanceLoading = true;
@@ -1360,6 +1438,13 @@ document.addEventListener("click", (event) => {
   const predictionButton = event.target.closest("[data-run-prediction]");
   if (predictionButton) {
     runGamePrediction(predictionButton);
+    return;
+  }
+
+  const scheduleDayButton = event.target.closest("[data-schedule-day]");
+  if (scheduleDayButton) {
+    state.scheduleDay = scheduleDayButton.dataset.scheduleDay;
+    renderSchedulePage();
     return;
   }
 

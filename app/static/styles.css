@@ -327,6 +327,24 @@ a {
   background: currentColor;
 }
 
+.calendar-icon::before {
+  content: "";
+  position: absolute;
+  inset: 4px 3px 3px;
+  border: 2px solid currentColor;
+  border-radius: 2px;
+}
+
+.calendar-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: 7px;
+  height: 2px;
+  background: currentColor;
+}
+
 .season-picker {
   display: grid;
   gap: 4px;
@@ -1692,7 +1710,7 @@ select {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .prediction-card-top {
@@ -1972,6 +1990,47 @@ select {
 
 .bracket-finals .bracket-columns {
   grid-template-columns: repeat(auto-fit, minmax(200px, 320px));
+}
+
+.schedule-days {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  margin-bottom: 16px;
+}
+
+.schedule-day-tab {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.74rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+
+.schedule-day-tab:hover {
+  color: var(--ink);
+}
+
+.schedule-day-tab.active {
+  color: #ffffff;
+  background: var(--ink);
+  border-color: var(--ink);
+}
+
+.schedule-score {
+  font-weight: 800;
+  color: var(--ink);
+  white-space: nowrap;
 }
 
 .footer-note {

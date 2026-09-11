@@ -77,7 +77,7 @@ def create_app() -> Flask:
 
     @app.get("/api/schedule")
     def schedule():
-        return jsonify({"upcoming_games": analytics.upcoming_games()})
+        return jsonify({"upcoming_games": analytics.upcoming_games(), "schedule": analytics.schedule_by_date()})
 
     @app.get("/api/game-prediction")
     def game_prediction():
