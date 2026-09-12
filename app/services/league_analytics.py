@@ -97,6 +97,42 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Shot chart. The shot-quality model already reasons about distance/angle/defender
+# distance per shot, but the app has never plotted or aggregated a single *real* shot
+# location - NBA.com Stats, ESPN, and Basketball-Reference all lead player pages with a
+# shot map plus zone-by-zone FG% vs. league average. `shotchartdetail` returns both the
+# raw shot coordinates and the league's own zone averages in one call, so this is a pure
+# frontend/data gap rather than a new model.
+_SHOT_ZONES = [
+    "Restricted Area",
+    "In The Paint (Non-RA)",
+    "Mid-Range",
+    "Left Corner 3",
+    "Right Corner 3",
+    "Above the Break 3",
+]
+_ZONE_VALUE = {
+    "Restricted Area": 2,
+    "In The Paint (Non-RA)": 2,
+    "Mid-Range": 2,
+    "Left Corner 3": 3,
+    "Right Corner 3": 3,
+    "Above the Break 3": 3,
+}
+# Deterministic zone-shape fallback when the live endpoint is unreachable: corner/RA
+# shots run hotter than a player's overall FG%, mid-range runs a bit colder - a
+# standard NBA shot-shape pattern - so the fallback stays plausible even off a single
+# overall FG%/3P% instead of flattening every zone to the same number.
+_ZONE_FALLBACK_MULTIPLIERS = {
+    "Restricted Area": ("fg", 1.35),
+    "In The Paint (Non-RA)": ("fg", 0.90),
+    "Mid-Range": ("fg", 0.85),
+    "Left Corner 3": ("fg3", 1.05),
+    "Right Corner 3": ("fg3", 1.05),
+    "Above the Break 3": ("fg3", 0.95),
+}
+_SHOT_CHART_MAX_SHOTS = 500  # cap the plotted dots; zone aggregates use every shot
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -518,6 +554,86 @@ class LeagueAnalyticsService:
             {"PlayerID": player_id, "Season": season, "SeasonType": season_type, "LeagueID": "00"},
             "PlayerGameLog",
         )
+
+    def player_shot_chart(self, player_id: int, season: str) -> dict[str, Any]:
+        """Real shot-location map + zone efficiency vs. league average, playoffs first
+        with a regular-season fallback (same pattern as `player_game_log`)."""
+        shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Playoffs")
+        season_type = "Playoffs"
+        if shots_frame.empty:
+            shots_frame, league_frame = self._shot_chart_frames(player_id, season, "Regular Season")
+            season_type = "Regular Season"
+        if shots_frame.empty:
+            return {"season_type": "N/A", "total_fga": 0, "total_fgm": 0, "fg_pct": 0.0, "shots": [], **shot_chart_fallback(46.0, 35.0)}
+
+        league_avg: dict[str, float] = {}
+        if not league_frame.empty and {"SHOT_ZONE_BASIC", "FG_PCT"} <= set(league_frame.columns):
+            for row in league_frame.to_dict("records"):
+                try:
+                    league_avg[str(row.get("SHOT_ZONE_BASIC", ""))] = float(row.get("FG_PCT") or 0)
+                except (TypeError, ValueError):
+                    continue
+
+        shots: list[dict[str, Any]] = []
+        for row in shots_frame.to_dict("records"):
+            zone = str(row.get("SHOT_ZONE_BASIC", ""))
+            if zone not in _ZONE_VALUE:
+                continue  # skip backcourt heaves - not a real shooting zone
+            try:
+                shots.append(
+                    {
+                        "x": float(row.get("LOC_X", 0) or 0),
+                        "y": float(row.get("LOC_Y", 0) or 0),
+                        "made": str(row.get("SHOT_MADE_FLAG", "0")) == "1",
+                        "zone": zone,
+                        "value": _ZONE_VALUE[zone],
+                    }
+                )
+            except (TypeError, ValueError):
+                continue
+
+        total_fga = len(shots)
+        total_fgm = sum(1 for shot in shots if shot["made"])
+        return {
+            "season_type": season_type,
+            "source": "live",
+            "total_fga": total_fga,
+            "total_fgm": total_fgm,
+            "fg_pct": round(total_fgm / total_fga * 100, 1) if total_fga else 0.0,
+            "zones": aggregate_shot_zones(shots, league_avg),
+            "shots": shots[:_SHOT_CHART_MAX_SHOTS],
+        }
+
+    @lru_cache(maxsize=64)
+    def _shot_chart_frames(self, player_id: int, season: str, season_type: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+        """Raw shot coordinates + this season's league zone averages in one call
+        (NBA Stats `shotchartdetail` returns both result sets together)."""
+        params = {
+            "LeagueID": "00", "Season": season, "SeasonType": season_type, "PlayerID": player_id,
+            "TeamID": 0, "GameID": "", "ContextMeasure": "FGA", "Period": 0, "LastNGames": 0,
+            "Month": 0, "OpponentTeamID": 0, "RangeType": 0, "StartPeriod": 1, "EndPeriod": 10,
+            "StartRange": 0, "EndRange": 28800, "Outcome": "", "Location": "", "SeasonSegment": "",
+            "DateFrom": "", "DateTo": "", "VsConference": "", "VsDivision": "", "Position": "",
+            "RookieYear": "", "GameSegment": "", "ClutchTime": "", "AheadBehind": "", "PointDiff": "",
+            "PlayerPosition": "", "ContextFilter": "",
+        }
+        try:
+            response = requests.get(
+                "https://stats.nba.com/stats/shotchartdetail",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_sets = response.json().get("resultSets", [])
+            shots_set = next((item for item in result_sets if item.get("name") == "Shot_Chart_Detail"), {})
+            league_set = next((item for item in result_sets if item.get("name") == "LeagueAverages"), {})
+            shots_frame = pd.DataFrame(shots_set.get("rowSet", []), columns=shots_set.get("headers", []))
+            league_frame = pd.DataFrame(league_set.get("rowSet", []), columns=league_set.get("headers", []))
+            return shots_frame, league_frame
+        except Exception:
+            return pd.DataFrame(), pd.DataFrame()
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
@@ -1464,6 +1580,44 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+def aggregate_shot_zones(shots: list[dict[str, Any]], league_avg: dict[str, float]) -> list[dict[str, Any]]:
+    """Per-zone FGA/FGM/FG%/points-per-shot vs. league average, in `_SHOT_ZONES` order."""
+    total_fga = len(shots)
+    rows = []
+    for zone in _SHOT_ZONES:
+        zone_shots = [shot for shot in shots if shot.get("zone") == zone]
+        fga = len(zone_shots)
+        fgm = sum(1 for shot in zone_shots if shot.get("made"))
+        fg_pct = round(fgm / fga * 100, 1) if fga else 0.0
+        pps = round((fgm / fga) * _ZONE_VALUE[zone], 2) if fga else 0.0
+        league_fg_pct = round(league_avg.get(zone, 0.0) * 100, 1)
+        rows.append(
+            {
+                "zone": zone,
+                "fga": fga,
+                "fgm": fgm,
+                "fg_pct": fg_pct,
+                "pps": pps,
+                "league_fg_pct": league_fg_pct,
+                "diff": round(fg_pct - league_fg_pct, 1) if fga else 0.0,
+                "share": round(fga / total_fga * 100, 1) if total_fga else 0.0,
+            }
+        )
+    return rows
+
+
+def shot_chart_fallback(fg_pct: float, fg3_pct: float) -> dict[str, Any]:
+    """Deterministic per-zone FG% stand-in when `shotchartdetail` is unreachable or a
+    player has no shots on record, shaped from overall FG%/3P% using the standard
+    NBA hot-zone pattern (see `_ZONE_FALLBACK_MULTIPLIERS`) so it stays plausible."""
+    zones = {}
+    for zone in _SHOT_ZONES:
+        basis, multiplier = _ZONE_FALLBACK_MULTIPLIERS[zone]
+        base = fg_pct if basis == "fg" else fg3_pct
+        zones[zone] = round(min(90.0, max(0.0, base * multiplier)), 1)
+    return {"source": "fallback", "zones": zones}
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:

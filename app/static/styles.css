@@ -1664,6 +1664,25 @@ select {
   padding: 16px;
 }
 
+.shot-court {
+  display: block;
+  width: 100%;
+  max-width: 380px;
+  height: auto;
+  margin: 12px auto 16px;
+  color: var(--line);
+}
+
+.shot-made {
+  fill: var(--green);
+  fill-opacity: 0.85;
+}
+
+.shot-missed {
+  fill: var(--red);
+  fill-opacity: 0.45;
+}
+
 .rotation-list {
   display: grid;
   gap: 8px;
