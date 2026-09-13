@@ -10,7 +10,6 @@ const state = {
   predictions: {},
   news: {},
   compare: { a: null, b: null },
-  matchups: { away: null, home: null },
   h2h: {},
   gameLog: {},
   matchups: {},
@@ -56,6 +55,7 @@ const els = {
   matchupPage: document.getElementById("matchupPage"),
   comparePage: document.getElementById("comparePage"),
   matchupsPage: document.getElementById("matchupsPage"),
+  shotChartPage: document.getElementById("shotChartPage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
   landscapePage: document.getElementById("landscapePage"),
   bracketPage: document.getElementById("bracketPage"),
@@ -198,6 +198,11 @@ function route() {
   if (section === "matchups") {
     renderMatchupsPage();
     setActivePage("matchupsPage", "matchups");
+    return;
+  }
+  if (section === "shot-chart") {
+    renderShotChartPage(slug);
+    setActivePage("shotChartPage", "shot-chart");
     return;
   }
   if (section === "power-rankings") {
@@ -1576,6 +1581,79 @@ function renderMatchupsPage() {
   setMatchupSelectValues(away, home);
 }
 
+function resolveShotChartPlayer(slug) {
+  const players = state.analytics?.players || [];
+  return (slug && playerByRoute(slug))
+    || players.find((player) => String(player.id) === String(state.shotChartPlayer))
+    || [...players].sort((a, b) => b.impact - a.impact)[0];
+}
+
+function renderShotChartPage(slug) {
+  const players = state.analytics?.players || [];
+  if (!players.length) {
+    els.shotChartPage.innerHTML = `<div class="page-heading"><div><h1>Player Shot Chart</h1><p>Not enough player data yet.</p></div></div>`;
+    return;
+  }
+  const player = resolveShotChartPlayer(slug);
+  state.shotChartPlayer = String(player.id);
+  const options = [...players].sort((a, b) => a.player.localeCompare(b.player))
+    .map((item) => `<option value="${item.id}">${html(item.player)} (${html(item.team)})</option>`).join("");
+  els.shotChartPage.innerHTML = `
+    <div class="page-heading">
+      <div><h1>Player Shot Chart</h1><p>Real shot attempts with zone efficiency versus league average.</p></div>
+      <div class="filter-group"><select data-shot-chart-player aria-label="Choose player">${options}</select></div>
+    </div>
+    <div class="segmented segmented-3" aria-label="Shot type filter">
+      ${["all", "2", "3"].map((value) => `<button class="segment ${state.shotChartFilter === value ? "active" : ""}" type="button" data-shot-chart-filter="${value}">${value === "all" ? "All Shots" : `${value}PT`}</button>`).join("")}
+    </div>
+    <div class="profile-grid player-shot-chart-grid">
+      <article class="profile-panel"><div class="panel-heading"><h2>${html(player.player)}</h2><span>${html(player.team_name)}</span></div><div id="player-shot-court">${renderPlayerShotCourt(player.id)}</div></article>
+      <aside class="profile-panel"><div class="panel-heading"><h2>Zone Breakdown</h2><span>vs. league average</span></div><div id="player-shot-zones">${renderPlayerShotZones(player.id)}</div></aside>
+    </div>`;
+  els.shotChartPage.querySelector("[data-shot-chart-player]").value = state.shotChartPlayer;
+  if (!state.shotChart[player.id]) loadPlayerShotChart(player.id);
+}
+
+function renderPlayerShotCourt(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading shot chart...</p>`;
+  if (entry.error) return `<p class="footer-note">Shot chart unavailable right now.</p>`;
+  const data = entry.data || {};
+  const shots = (data.shots || []).filter((shot) => state.shotChartFilter === "all" || String(shot.v) === state.shotChartFilter);
+  if (!shots.length) return `<p class="footer-note">No matching shots found for this player.</p>`;
+  const totals = data.totals || {};
+  const marks = shots.map((shot) => {
+    const x = Number(shot.x) + 250;
+    const y = 422.5 - Number(shot.y);
+    return shot.m
+      ? `<circle cx="${x}" cy="${y}" r="2.7" class="player-shot-made" />`
+      : `<path d="M${x - 2} ${y - 2}L${x + 2} ${y + 2}M${x + 2} ${y - 2}L${x - 2} ${y + 2}" class="player-shot-missed" />`;
+  }).join("");
+  return `<div class="player-shot-totals"><span>${totals.fgm ?? 0}/${totals.fga ?? 0} FG (${Number(totals.fg_pct || 0).toFixed(1)}%)</span><span>${totals.fg3m ?? 0}/${totals.fg3a ?? 0} 3PT (${Number(totals.fg3_pct || 0).toFixed(1)}%)</span></div>
+    <svg class="player-court-svg" viewBox="0 0 500 470" role="img" aria-label="Shot chart"><rect x="1" y="1" width="498" height="468"/><rect x="170" y="280" width="160" height="189"/><circle cx="250" cy="422.5" r="7.5"/><line x1="220" y1="430" x2="280" y2="430"/><path d="M30 334A237.5 237.5 0 0 0 470 334"/><line x1="30" y1="470" x2="30" y2="334"/><line x1="470" y1="470" x2="470" y2="334"/>${marks}</svg>
+    <div class="player-shot-legend"><span class="positive">● Made</span><span class="concern">× Missed</span></div>`;
+}
+
+function renderPlayerShotZones(playerId) {
+  const entry = state.shotChart[playerId];
+  if (!entry || entry.loading) return `<p class="footer-note">Loading zone breakdown...</p>`;
+  if (entry.error) return `<p class="footer-note">Zone breakdown unavailable right now.</p>`;
+  const zones = entry.data?.zones || [];
+  if (!zones.length) return `<p class="footer-note">No zone data found for this player.</p>`;
+  return `<div class="table-wrap"><table><thead><tr><th>Zone</th><th>FGM</th><th>FGA</th><th>FG%</th><th>Lg FG%</th><th>Diff</th></tr></thead><tbody>${zones.map((zone) => `<tr><td>${html(zone.zone)}</td><td>${zone.fgm}</td><td>${zone.fga}</td><td>${Number(zone.fg_pct).toFixed(1)}</td><td>${Number(zone.league_fg_pct).toFixed(1)}</td><td class="${zone.diff >= 0 ? "positive" : "concern"}">${zone.diff > 0 ? "+" : ""}${Number(zone.diff).toFixed(1)}</td></tr>`).join("")}</tbody></table></div>`;
+}
+
+function loadPlayerShotChart(playerId) {
+  state.shotChart[playerId] = { loading: true };
+  fetch(`/api/players/${playerId}/shot-chart`).then((response) => response.json()).then((data) => {
+    state.shotChart[playerId] = { data };
+    if (String(playerId) === state.shotChartPlayer) renderShotChartPage();
+  }).catch(() => {
+    state.shotChart[playerId] = { error: true };
+    if (String(playerId) === state.shotChartPlayer) renderShotChartPage();
+  });
+}
+
 function renderPowerRankingsPage() {
   if (!state.powerRankings && !state.powerRankingsLoading) {
     state.powerRankingsLoading = true;
@@ -2254,6 +2332,13 @@ document.addEventListener("change", (event) => {
   if (matchupSelect) {
     state.matchups[matchupSelect.dataset.matchupSelect] = matchupSelect.value;
     renderMatchupsPage();
+    return;
+  }
+
+  const shotChartSelect = event.target.closest("[data-shot-chart-player]");
+  if (shotChartSelect) {
+    state.shotChartPlayer = shotChartSelect.value;
+    renderShotChartPage();
   }
 });
 
@@ -2322,6 +2407,13 @@ document.addEventListener("click", (event) => {
       state.landscape.sortDir = key === "team" ? "asc" : "desc";
     }
     renderLandscapePage();
+    return;
+  }
+
+  const shotFilter = event.target.closest("[data-shot-chart-filter]");
+  if (shotFilter) {
+    state.shotChartFilter = shotFilter.dataset.shotChartFilter;
+    renderShotChartPage();
   }
 });
 

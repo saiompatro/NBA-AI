@@ -137,6 +137,32 @@ _ELO_POINTS_PER_MARGIN = 25.0  # empirical NBA conversion: ~25 Elo points ~= 1 p
 _ELO_EDGE_WEIGHT = 0.5        # Elo is a second opinion alongside net rating, not a replacement
 _ELO_EDGE_CAP = 3.0           # hard cap on total margin swing from the Elo signal
 
+# Player shot charts use the NBA Stats endpoint's native zone names, while team
+# profiles collapse the two corner-three buckets into one five-zone summary.
+SHOT_ZONE_ORDER = [
+    "Restricted Area",
+    "In The Paint (Non-RA)",
+    "Mid-Range",
+    "Left Corner 3",
+    "Right Corner 3",
+    "Above the Break 3",
+]
+SHOT_ZONES = [
+    {"api_name": "Restricted Area", "label": "Restricted Area", "key": "rim", "points": 2},
+    {"api_name": "In The Paint (Non-RA)", "label": "Paint (Non-RA)", "key": "paint", "points": 2},
+    {"api_name": "Mid-Range", "label": "Mid-Range", "key": "midrange", "points": 2},
+    {"api_name": "Left Corner 3", "label": "Corner 3", "key": "corner3", "points": 3},
+    {"api_name": "Right Corner 3", "label": "Corner 3", "key": "corner3", "points": 3},
+    {"api_name": "Above the Break 3", "label": "Above the Break 3", "key": "atb3", "points": 3},
+]
+_LEAGUE_SHOT_ZONE_SHAPE = [
+    {"key": "rim", "zone": "Restricted Area", "points": 2, "freq": 32.0, "fg_pct": 63.0},
+    {"key": "paint", "zone": "Paint (Non-RA)", "points": 2, "freq": 12.0, "fg_pct": 42.0},
+    {"key": "midrange", "zone": "Mid-Range", "points": 2, "freq": 11.0, "fg_pct": 41.0},
+    {"key": "corner3", "zone": "Corner 3", "points": 3, "freq": 8.0, "fg_pct": 39.0},
+    {"key": "atb3", "zone": "Above the Break 3", "points": 3, "freq": 37.0, "fg_pct": 35.0},
+]
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -1178,6 +1204,7 @@ class LeagueAnalyticsService:
 
         home_net = float(home.get("net", seed_net_rating(int(home["seed"]))))
         away_net = float(away.get("net", seed_net_rating(int(away["seed"]))))
+        net_edge = home_net - away_net
 
         # Injury adjustment (best-effort, news-driven). Reuses the shared
         # InjuryNewsWatch and the per-player IMPACT score from playoff_players.
@@ -1200,6 +1227,12 @@ class LeagueAnalyticsService:
             away_injury_pts = self._injury_points(away_out)
         except Exception:
             pass
+
+        try:
+            h2h = self.head_to_head(away["abbr"], home["abbr"])
+        except Exception:
+            h2h = {"ok": False, "games_found": 0, "margin_edge": 0.0, "games": []}
+        h2h_edge = float(h2h.get("margin_edge", 0.0) or 0.0)
 
         game_date = date.today()
         home_rest = self._rest_days(home["abbr"], game_date)
@@ -1237,11 +1270,12 @@ class LeagueAnalyticsService:
 
         expected_home_margin = (
             (home_net - away_net) + hca - home_injury_pts + away_injury_pts
-            + rest_edge + form_edge + split_edge + ff_edge + elo_edge
+            + rest_edge + form_edge + split_edge + ff_edge + elo_edge + h2h_edge
         )
         margin_breakdown = margin_breakdown_rows(
             home["abbr"], away["abbr"], net_edge, hca,
             home_injury_pts, away_injury_pts, rest_edge, form_edge, split_edge, ff_edge,
+            elo_edge=elo_edge, h2h_edge=h2h_edge,
         )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
@@ -1446,6 +1480,7 @@ class LeagueAnalyticsService:
                 "margin_edge": round(elo_edge, 2),
                 "note": f"Replayed from real results over the last {_ELO_SEASONS_OF_HISTORY} seasons (538 NBA Elo methodology).",
             },
+            "head_to_head": h2h,
             "calibration": {
                 "home_court_advantage": round(hca, 2),
                 "scale": round(scale, 2),
@@ -2155,6 +2190,163 @@ def form_margin_edge(home_last10: str, away_last10: str) -> float:
     away_wins = LeagueAnalyticsService._form_wins(away_last10)
     edge = (home_wins - away_wins) * _FORM_POINTS_PER_WIN
     return max(-_FORM_POINTS_CAP, min(_FORM_POINTS_CAP, edge))
+
+
+def _prior_season(season: str) -> str:
+    start_year = int(season.split("-")[0]) - 1
+    return f"{start_year}-{str(start_year + 1)[-2:]}"
+
+
+def _recent_seasons(seasons_back: int) -> list[str]:
+    seasons = [current_season()]
+    for _ in range(max(0, seasons_back - 1)):
+        seasons.append(_prior_season(seasons[-1]))
+    return seasons
+
+
+def _extract_h2h_meetings(
+    frame: pd.DataFrame,
+    home_code: str,
+    away_code: str,
+    season: str,
+    season_type: str,
+) -> list[dict[str, Any]]:
+    """Reconstruct one completed game from the two team rows in a league log."""
+    if frame.empty or "TEAM_ABBREVIATION" not in frame.columns:
+        return []
+    codes = {home_code, away_code}
+    subset = frame[frame["TEAM_ABBREVIATION"].isin(codes)]
+    if subset.empty:
+        return []
+
+    games: list[dict[str, Any]] = []
+    for game_id, group in subset.groupby("GAME_ID"):
+        if len(group) != 2:
+            continue
+        rows = group.to_dict("records")
+        if {str(row.get("TEAM_ABBREVIATION", "")) for row in rows} != codes:
+            continue
+        home_row = next((row for row in rows if " vs. " in str(row.get("MATCHUP", ""))), None)
+        away_row = next((row for row in rows if row is not home_row), None)
+        if home_row is None or away_row is None:
+            continue
+        actual_home = str(home_row.get("TEAM_ABBREVIATION", ""))
+        actual_away = str(away_row.get("TEAM_ABBREVIATION", ""))
+        home_pts = int(pd.to_numeric(home_row.get("PTS", 0), errors="coerce") or 0)
+        away_pts = int(pd.to_numeric(away_row.get("PTS", 0), errors="coerce") or 0)
+        margin = home_pts - away_pts
+        games.append(
+            {
+                "game_id": str(game_id),
+                "date": str(home_row.get("GAME_DATE", "")),
+                "season": season,
+                "season_type": season_type,
+                "home": actual_home,
+                "away": actual_away,
+                "home_pts": home_pts,
+                "away_pts": away_pts,
+                "margin": margin,
+                "winner": actual_home if margin >= 0 else actual_away,
+                "at_home": actual_home == home_code,
+                "label": f"{actual_home} {home_pts} - {away_pts} {actual_away}",
+            }
+        )
+    return games
+
+
+def _h2h_failure(
+    home_code: str,
+    away_code: str,
+    message: str,
+    generated_at: str,
+    seasons: list[str] | None = None,
+) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "home": home_code,
+        "away": away_code,
+        "seasons": seasons or [],
+        "games_found": 0,
+        "record": {"home_wins": 0, "away_wins": 0},
+        "home_court_record": {"home_wins": 0, "away_wins": 0, "games": 0},
+        "avg_margin_home": None,
+        "avg_margin_home_court": None,
+        "last_meeting": None,
+        "games": [],
+        "margin_edge": 0.0,
+        "summary": message,
+        "message": message,
+        "generated_at": generated_at,
+    }
+
+
+def h2h_margin_edge(avg_margin_home: float | None, games: int) -> float:
+    """Convert recent matchup margin into a small, sample-size-adjusted edge."""
+    if avg_margin_home is None or games < _H2H_MIN_GAMES:
+        return 0.0
+    weight = min(1.0, games / _H2H_FULL_WEIGHT_GAMES)
+    edge = avg_margin_home * _H2H_POINTS_PER_MARGIN * weight
+    return max(-_H2H_CAP, min(_H2H_CAP, edge))
+
+
+def h2h_summary(
+    home_abbr: str,
+    away_abbr: str,
+    home_wins: int,
+    away_wins: int,
+    avg_margin_home: float | None,
+    games: int,
+) -> str:
+    """Return a concise explanation of the recent matchup history."""
+    if games <= 0:
+        return "No recent meetings on record."
+    if home_wins > away_wins:
+        lead = f"{home_abbr} has won {home_wins} of the last {games} meetings"
+    elif away_wins > home_wins:
+        lead = f"{away_abbr} has won {away_wins} of the last {games} meetings"
+    else:
+        lead = f"The last {games} meetings are split {home_wins}-{away_wins}"
+    margin = abs(avg_margin_home) if avg_margin_home is not None else 0.0
+    summary = f"{lead}, by an average of {margin:.1f} points."
+    if games < _H2H_FULL_WEIGHT_GAMES:
+        summary += " That's a small sample, so weight it lightly."
+    return summary
+
+
+def margin_breakdown_rows(
+    home_abbr: str,
+    away_abbr: str,
+    net_edge: float,
+    hca: float,
+    home_injury_pts: float,
+    away_injury_pts: float,
+    rest_edge: float,
+    form_edge: float,
+    split_edge: float,
+    ff_edge: float,
+    *,
+    elo_edge: float | None = None,
+    h2h_edge: float | None = None,
+) -> list[dict[str, Any]]:
+    """Build the home-relative point-margin waterfall used by predictions."""
+    rows = [
+        {"label": "Team net rating", "points": round(net_edge, 1), "detail": f"{home_abbr} vs {away_abbr} season net rating"},
+        {"label": "Home court", "points": round(hca, 1), "detail": "Fixed home-court advantage"},
+        {
+            "label": "Availability",
+            "points": round(away_injury_pts - home_injury_pts, 1),
+            "detail": f"Injury-adjusted points lost, {home_abbr} vs {away_abbr}",
+        },
+        {"label": "Rest / schedule", "points": round(rest_edge, 1), "detail": "Back-to-back and rest-day fatigue"},
+        {"label": "Recent form", "points": round(form_edge, 1), "detail": "Last-10-game momentum"},
+        {"label": "Home/road split", "points": round(split_edge, 1), "detail": "Home vs. road net rating tendency"},
+        {"label": "Four factors", "points": round(ff_edge, 1), "detail": "eFG% / TOV% / OREB% / FT rate blend"},
+    ]
+    if elo_edge is not None:
+        rows.append({"label": "Elo rating", "points": round(elo_edge, 1), "detail": "Game-by-game team strength"})
+    if h2h_edge is not None:
+        rows.append({"label": "Head-to-head", "points": round(h2h_edge, 1), "detail": "Recent matchup history"})
+    return rows
 
 
 def home_road_split_edge(

@@ -2260,6 +2260,13 @@ select {
   border-left: 3px solid var(--accent);
 }
 
+.player-shot-chart-grid { align-items: start; }
+.player-shot-totals, .player-shot-legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 12px 0; font-weight: 700; }
+.player-court-svg { width: 100%; height: auto; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; }
+.player-court-svg > rect, .player-court-svg > circle, .player-court-svg > line, .player-court-svg > path { fill: none; stroke: var(--line-strong); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.player-court-svg .player-shot-made { fill: var(--green); stroke: none; }
+.player-court-svg .player-shot-missed { stroke: var(--red); stroke-width: 1.6; }
+
 .power-blurb {
   color: var(--muted);
   font-size: 0.82rem;
