@@ -139,6 +139,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/compare`              | Player comparison    |
 | `#/matchups`             | Head-to-head matchup history |
 | `#/power-rankings`      | Power rankings        |
+| `#/landscape`            | League efficiency landscape |
 | `#/bracket`              | Playoff bracket        |
 | `#/model`               | Model accuracy         |
 | `#/alerts`              | News alerts          |
