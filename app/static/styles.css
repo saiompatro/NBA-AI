@@ -744,14 +744,14 @@ td {
 }
 
 th {
-  color: #3b4657;
+  color: var(--muted);
   font-size: 0.68rem;
   font-weight: 800;
   text-transform: uppercase;
 }
 
 td {
-  color: #182434;
+  color: var(--ink-2);
   font-weight: 650;
 }
 
@@ -1429,6 +1429,13 @@ select {
 
 .conference-grid {
   grid-template-columns: 1fr 1fr;
+}
+
+/* Full standings page needs the entire width for its 12-column tables,
+   unlike the bracket page which also shares .conference-grid for its
+   side-by-side round columns. */
+.standings-grid {
+  grid-template-columns: 1fr;
 }
 
 .team-grid {

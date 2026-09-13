@@ -127,7 +127,8 @@ The frontend is a single-page app driven by hash routes:
 | Route                   | View                 |
 | ----------------------- | -------------------- |
 | `#/live`                | Live game tracker    |
-| `#/table`               | Playoff standings    |
+| `#/table`               | Dashboard overview (compact standings, schedule, leaders, form) |
+| `#/standings`           | Full standings (W-L, PCT, GB, L10, STRK per conference) |
 | `#/players`             | Player list          |
 | `#/players/<slug>-<id>` | Player profile       |
 | `#/teams`               | Team list            |
