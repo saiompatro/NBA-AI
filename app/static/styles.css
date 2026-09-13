@@ -1699,7 +1699,7 @@ select {
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--surface);
 }
 
 .prediction-card-top {
@@ -1724,7 +1724,7 @@ select {
   min-height: 30px;
   align-items: center;
   border-radius: 4px;
-  background: #eef0f3;
+  background: var(--surface-2);
   color: var(--muted);
   padding: 0 12px;
   font-size: 0.74rem;
@@ -1744,7 +1744,7 @@ select {
 
 .prediction-result p {
   margin: 4px 0 0;
-  color: #334155;
+  color: var(--ink-2);
   font-size: 0.9rem;
   line-height: 1.45;
   font-weight: 650;
@@ -1781,6 +1781,101 @@ select {
   grid-template-columns: 48px 1fr 42px;
   margin-bottom: 0;
   font-size: 0.82rem;
+}
+
+.margin-waterfall {
+  margin-top: 2px;
+}
+
+.margin-waterfall summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  user-select: none;
+}
+
+.margin-waterfall summary:hover {
+  color: var(--ink-2);
+}
+
+.mw-row {
+  display: grid;
+  grid-template-columns: 108px 1fr 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 0.78rem;
+}
+
+.mw-row:last-of-type {
+  border-bottom: none;
+}
+
+.mw-row > span {
+  color: var(--muted);
+  font-weight: 650;
+}
+
+.mw-row > small {
+  color: var(--subtle);
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mw-row > strong {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mw-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+}
+
+.mw-track::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  left: 50%;
+  width: 1px;
+  background: var(--line-strong);
+}
+
+.mw-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+}
+
+.mw-bar.home {
+  background: var(--green);
+}
+
+.mw-bar.away {
+  background: var(--red);
+}
+
+.mw-total {
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line-strong);
+  border-bottom: none;
+}
+
+.mw-total > span {
+  color: var(--ink);
+  font-weight: 700;
 }
 
 .news-panel {

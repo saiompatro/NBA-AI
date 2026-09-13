@@ -1109,6 +1109,10 @@ class LeagueAnalyticsService:
             (home_net - away_net) + hca - home_injury_pts + away_injury_pts
             + rest_edge + form_edge + split_edge + ff_edge + elo_edge
         )
+        margin_breakdown = margin_breakdown_rows(
+            home["abbr"], away["abbr"], net_edge, hca,
+            home_injury_pts, away_injury_pts, rest_edge, form_edge, split_edge, ff_edge,
+        )
         home_probability = 1 / (1 + exp(-expected_home_margin / scale))
         home_probability = max(0.02, min(0.98, home_probability))
         away_probability = 1 - home_probability
@@ -1318,6 +1322,7 @@ class LeagueAnalyticsService:
                 "source": "fit to real game results" if _CALIBRATION_PATH.exists() else "default constants",
             },
             "data_quality": data_quality,
+            "margin_breakdown": margin_breakdown,
             "factors": [
                 {"label": "Team margin", "winner": round(winner_strength, 1), "opponent": round(loser_strength, 1)},
                 {"label": "Scoring", "winner": round(float(winner.get("pts", 0)), 1), "opponent": round(float(loser.get("pts", 0)), 1)},
