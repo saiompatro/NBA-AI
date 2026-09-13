@@ -35,6 +35,12 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _CALIBRATION_PATH = Path("data/pregame_calibration.json")
 _DEFAULT_CALIBRATION = {"home_court_advantage": 2.8, "scale": 11.5}
 
+# Separate, parallel backtest for the *live/in-game* models (shot-quality +
+# win-probability) against a small hand-extracted sample of real 2022-23
+# play-by-play - produced by scripts/backtest_real_games.py. Distinct from
+# the pre-game calibration above, which is unrelated and untouched by this.
+_LIVE_BACKTEST_PATH = Path("data/live_model_backtest.json")
+
 # Injury adjustment: convert a player's season IMPACT score into points of
 # game margin, capped so a single team can never swing more than a few points.
 _IMPACT_TO_POINTS = 0.12       # a ~30-impact star out ≈ 3.6 pts of margin
@@ -219,8 +225,13 @@ class LeagueAnalyticsService:
             data = json.loads(_CALIBRATION_PATH.read_text())
         except Exception:
             data = {}
+        try:
+            live_backtest = json.loads(_LIVE_BACKTEST_PATH.read_text())
+        except Exception:
+            live_backtest = None
         return {
             "calibrated": bool(data),
+            "live_model_backtest": live_backtest,
             "accuracy": data.get("fit_accuracy"),
             "log_loss": data.get("fit_log_loss"),
             "games_backtested": data.get("games_used"),

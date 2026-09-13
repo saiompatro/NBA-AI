@@ -1850,7 +1850,25 @@ function renderModelPerformancePage() {
         ${(perf.inputs || []).map((input) => `<div class="simple-row"><span>${html(input)}</span></div>`).join("")}
       </div>
     </article>
+    ${liveModelBacktestPanel(perf.live_model_backtest)}
     ${shotQualityPanel(state.shotQuality)}
+  `;
+}
+
+function liveModelBacktestPanel(backtest) {
+  if (!backtest) return "";
+  const wp = backtest.win_probability || {};
+  return `
+    <article class="panel">
+      <div class="panel-heading"><h2>Live In-Game Model — Real-Game Backtest</h2></div>
+      <div class="settings-list">
+        <div class="simple-row"><span><strong>Games backtested</strong><br /><small>Real 2022-23 play-by-play, hand-extracted.</small></span><span class="sentiment-pill neutral">${backtest.games ?? "--"}</span></div>
+        <div class="simple-row"><span><strong>Log loss</strong><br /><small>Win-probability model vs. 16 real in-game checkpoints.</small></span><span class="sentiment-pill neutral">${wp.log_loss != null ? wp.log_loss.toFixed(4) : "--"}</span></div>
+        <div class="simple-row"><span><strong>Brier score</strong><br /><small>Mean squared error of the predicted win probability.</small></span><span class="sentiment-pill neutral">${wp.brier_score != null ? wp.brier_score.toFixed(4) : "--"}</span></div>
+        <div class="simple-row"><span><strong>Final-checkpoint accuracy</strong><br /><small>Predicted winner at each game's last checkpoint vs. the actual result.</small></span><span class="sentiment-pill neutral">${html(wp.final_checkpoint_accuracy || "--")}</span></div>
+      </div>
+      <p class="footer-note">${html(backtest.sample_size_caveat || "")}</p>
+    </article>
   `;
 }
 
@@ -1864,6 +1882,7 @@ function shotQualityPanel(shotQuality) {
     `;
   }
   const evalData = shotQuality.evaluation;
+  const realBacktest = shotQuality.real_backtest;
   return `
     <article class="panel">
       <div class="panel-heading"><h2>Shot Quality Model</h2></div>
@@ -1871,6 +1890,10 @@ function shotQualityPanel(shotQuality) {
         <div class="simple-row"><span><strong>R&sup2;</strong><br /><small>Variance explained on a synthetic holdout.</small></span><span class="sentiment-pill neutral">${evalData.r2}</span></div>
         <div class="simple-row"><span><strong>MAE</strong><br /><small>Mean absolute error in shot-quality points.</small></span><span class="sentiment-pill neutral">${evalData.mae}</span></div>
         <div class="simple-row"><span><strong>Holdout size</strong><br /><small>Synthetic rows scored, unseen during training.</small></span><span class="sentiment-pill neutral">${evalData.holdout_rows}</span></div>
+        ${realBacktest ? `
+        <div class="simple-row"><span><strong>Real FG%</strong><br /><small>Real 2022-23 shots (small sample) backtested against.</small></span><span class="sentiment-pill neutral">${(realBacktest.overall_real_fg_pct * 100).toFixed(1)}%</span></div>
+        <div class="simple-row"><span><strong>Real-vs-predicted correlation</strong><br /><small>Real make-rate vs. predicted quality, by distance bucket (real 2022-23 shots, small sample).</small></span><span class="sentiment-pill neutral">${realBacktest.correlation_real_fg_vs_predicted_quality}</span></div>
+        ` : ""}
       </div>
       <p class="footer-note">${html(evalData.note || "")}</p>
     </article>

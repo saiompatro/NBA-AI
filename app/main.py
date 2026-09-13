@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from threading import Lock
 
 from flask import Flask, jsonify, render_template, request
@@ -109,19 +111,23 @@ def create_app() -> Flask:
 
     @app.get("/api/shot-quality")
     def shot_quality_metadata():
-        return jsonify(
-            {
-                "feature_importance": shot_model.feature_importance(),
-                "model": "XGBoost shot-quality model",
-                "inputs": ["distance", "angle", "defender_distance", "shot_clock", "game_situation"],
-                "input_owner": "nba_api live play-by-play / NBA Stats data layer",
-                "evaluation": {
-                    **shot_model.evaluation(),
-                    "note": "Fit against a synthetic holdout, not real shot outcomes - there's no real-game "
-                    "ground truth for shot quality without proprietary tracking data.",
-                },
-            }
-        )
+        payload = {
+            "feature_importance": shot_model.feature_importance(),
+            "model": "XGBoost shot-quality model",
+            "inputs": ["distance", "angle", "defender_distance", "shot_clock", "game_situation"],
+            "input_owner": "nba_api live play-by-play / NBA Stats data layer",
+            "evaluation": {
+                **shot_model.evaluation(),
+                "note": "Fit against a synthetic holdout, not real shot outcomes - there's no real-game "
+                "ground truth for shot quality without proprietary tracking data.",
+            },
+        }
+        try:
+            live_backtest = json.loads(Path("data/live_model_backtest.json").read_text())
+            payload["real_backtest"] = live_backtest.get("shot_quality")
+        except Exception:
+            pass
+        return jsonify(payload)
 
     @app.get("/teams/<slug>")
     @app.get("/players/<slug>")

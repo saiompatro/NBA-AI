@@ -174,6 +174,14 @@ This project uses the following **public, unauthenticated** data sources. No API
 
 The ML models in this repository are trained on **synthetically generated data** (`data/synthetic_shot_quality_training.csv`). The generator (`app/models/shot_quality.py`) produces plausible shot-context distributions but does not use any proprietary tracking data (e.g. Second Spectrum, SportVU). For production-quality predictions, replace the synthetic generators with real historical play-by-play and tracking data.
 
+A small **real-data validation set** now exists alongside the synthetic training data: `data/real_shot_events_2023.csv` (329 real field-goal attempts from 2 complete 2022-23 games) and `data/real_game_snapshots_2023.csv` (16 real in-game score/time snapshots from those same 2 games). `scripts/backtest_real_games.py` scores the pre-trained shot-quality and win-probability models against this sample and writes `data/live_model_backtest.json`, surfaced on the Model Accuracy page. This is a small-N (2 games / 329 shots) directional sanity check, not a retrain — the models are still *trained* entirely on synthetic data.
+
+### Real-game validation sample (Hugging Face Hub)
+
+- **Dataset:** [`brendanwilliam/nba-playbyplay-2223season`](https://huggingface.co/datasets/brendanwilliam/nba-playbyplay-2223season) (Hugging Face Hub) — a Sportradar/NBA-CDN-style box-score and play-by-play dump for the 2022-23 season. The Hub repo carries no explicit license tag.
+- **Use here:** two complete games were hand-extracted into `data/real_shot_events_2023.csv` and `data/real_game_snapshots_2023.csv` for the backtest above.
+- **Data owner:** the underlying box-score/play-by-play content is sourced from the NBA's public stats/box-score feeds and is property of the NBA — treated the same as the `nba_api`/ESPN data above: used here only as a small offline validation sample, not redistributed at scale, subject to the [NBA Terms of Use](https://www.nba.com/tos).
+
 ## ML Models
 
 | Model           | File                           | Algorithm         | Inputs                                                                            |
@@ -186,6 +194,8 @@ Both artifacts are pre-trained on synthetic data and included in the repository.
 ```bash
 python scripts/train_models.py
 ```
+
+Regenerate the real-game backtest (`data/live_model_backtest.json`) at any time with `python scripts/backtest_real_games.py`.
 
 ## Contributing
 
