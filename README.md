@@ -135,6 +135,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/teams`               | Team list            |
 | `#/teams/<slug>`        | Team profile         |
 | `#/predictions`         | Game prediction tool |
+| `#/matchup/<away>-<home>` | Matchup preview     |
 | `#/compare`              | Player comparison    |
 | `#/matchups`             | Head-to-head matchup history |
 | `#/power-rankings`      | Power rankings        |
