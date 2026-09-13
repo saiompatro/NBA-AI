@@ -23,6 +23,9 @@ const state = {
   modelPerformanceLoading: false,
   shotQuality: null,
   shotQualityLoading: false,
+  shotChart: {},
+  shotChartPlayer: null,
+  shotChartFilter: "all",
 };
 
 const els = {
@@ -908,6 +911,7 @@ function renderPlayerDetail(slug) {
           <div><span>Impact</span><strong>${player.impact}</strong></div>
         </div>
         <p style="color:var(--muted);font-weight:700;margin:16px 0 0">Sentiment: <span class="${player.sentiment.label.toLowerCase()}">${player.sentiment.label}</span></p>
+        <a class="panel-link" href="#/shot-chart/${player.slug}-${player.id}">View Shot Chart <span aria-hidden="true">-></span></a>
       </aside>
     </section>
     ${gameLogPanel(player.id)}

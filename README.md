@@ -108,6 +108,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/table`                                                  | Live playoff series scores by round (feeds the bracket page) |
 | GET    | `/api/players`                                                | Playoff player stats                          |
 | GET    | `/api/players/<id>/game-log`                                  | Real last-10 boxscore log for a player (playoffs, falling back to regular season) |
+| GET    | `/api/players/<id>/shot-chart`                                | Player shot chart: shot locations, totals, and zone FG% vs. league average |
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/standings`                                              | Full-league (30-team) regular-season standings, east/west |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
