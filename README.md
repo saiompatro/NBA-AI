@@ -14,6 +14,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Shot-quality model** — XGBoost regressor using distance, angle, defender distance, shot clock, and game situation
 - **Win-probability model** — PyTorch network using score differential, time remaining, possession, fouls, and shot quality
 - **Win-probability trend chart** — live line chart of the home team's win probability across the game, capped at the last 1,000 snapshots
+- **Live shot chart** — half-court diagram of every field-goal attempt in the live game, colored by make/miss and sized by the model's shot-quality score for that shot
 - **Playoff dashboard** — standings, schedule, team form, player leaders, sentiment, and alerts
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
 - **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, an Elo rating replayed from real results over the last 3 seasons (538 NBA Elo methodology), injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and the full four factors (eFG%, TOV%, OREB%, FT rate)

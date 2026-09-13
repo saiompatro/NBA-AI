@@ -355,6 +355,7 @@ function renderLivePage() {
   const awayOut = snapshot?.away_players_out || [];
   const homeBox = snapshot?.home_box_score || [];
   const awayBox = snapshot?.away_box_score || [];
+  const shots = snapshot?.shot_chart || [];
   const hasUnavailable = homeOut.length > 0 || awayOut.length > 0;
   const isAdjusted = hasUnavailable && Math.abs(homeWin - rawHomeWin) >= 1;
 
@@ -429,6 +430,10 @@ function renderLivePage() {
           <strong>${shotQuality}%</strong>
           <div><i style="width:${shotQuality}%"></i></div>
         </div>
+      </article>
+      <article class="panel shot-chart-panel">
+        <div class="panel-heading"><h2>Shot Chart</h2><span>All attempts this game</span></div>
+        ${shotChart(shots)}
       </article>
       ${hasUnavailable ? `
       <article class="panel unavailable-panel">
@@ -1981,6 +1986,76 @@ function winProbabilityChart(history, homeTeam, awayTeam) {
         <line x1="0" y1="${midY}" x2="${w}" y2="${midY}" class="wp-chart-midline" />
         <polyline fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" points="${coords}" class="wp-chart-line" />
       </svg>
+    </div>
+  `;
+}
+
+function shotChart(shots) {
+  if (!shots || shots.length === 0) {
+    return `<div class="shot-chart-empty">No field-goal attempts recorded yet this game.</div>`;
+  }
+
+  const W = 510, H = 480, FT = 10;
+  const toX = (ft) => 5 + (ft + 25) * FT;
+  const toY = (ft) => 475 - ft * FT;
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+
+  const made = shots.filter((s) => s.result === "made").length;
+  const missed = shots.filter((s) => s.result === "missed").length;
+  const unknown = shots.filter((s) => s.result === "unknown").length;
+
+  const latest = shots[shots.length - 1];
+  const order = { missed: 0, unknown: 1, made: 2 };
+  const ordered = shots
+    .map((shot, index) => ({ shot, index }))
+    .sort((a, b) => {
+      const byResult = (order[a.shot.result] ?? 1) - (order[b.shot.result] ?? 1);
+      if (byResult !== 0) return byResult;
+      return a.index - b.index;
+    });
+
+  const dots = ordered.map(({ shot }) => {
+    const dist = clamp(Number(shot.distance) || 0, 0, 40);
+    const rad = (clamp(Number(shot.angle) || 0, -55, 55) * Math.PI) / 180;
+    const cx = toX(clamp(dist * Math.sin(rad), -24.2, 24.2));
+    const cy = toY(clamp(5.25 + dist * Math.cos(rad), 0.8, 46.2));
+    const q = clamp(Number(shot.shot_quality) || 0, 0, 1);
+    const r = (4 + q * 5).toFixed(1);
+    const isLatest = shot === latest;
+    const cls = `shot-chart-dot ${shot.result}${isLatest ? " latest" : ""}`;
+    const distanceLabel = Number.isFinite(Number(shot.distance)) ? `${Math.round(Number(shot.distance))} ft` : "";
+    const valueLabel = shot.shot_value === 3 ? "3PT" : "2PT";
+    const resultLabel = shot.result === "unknown" ? "outcome unclear" : shot.result;
+    const tooltip = `${shot.team ? `${shot.team} ` : ""}${shot.player ? `${shot.player} — ` : ""}${distanceLabel} ${valueLabel} ${resultLabel} · Q${shot.period} ${shot.clock} · quality ${Math.round(q * 100)}%${shot.description ? ` · ${shot.description}` : ""}`;
+    return `<circle class="${cls}" cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r}"><title>${html(tooltip)}</title></circle>`;
+  }).join("");
+
+  return `
+    <div class="shot-chart">
+      <div class="shot-chart-heading">
+        <span>${made} made</span>
+        <span>${shots.length} attempts</span>
+        <span>${missed} missed</span>
+      </div>
+      <svg class="shot-chart-svg" viewBox="0 0 ${W} ${H}" role="img"
+           aria-label="Half-court chart of every field-goal attempt in this game">
+        <rect class="shot-chart-court" x="5" y="5" width="500" height="470" rx="2" />
+        <rect class="shot-chart-key" x="175" y="285" width="160" height="190" />
+        <circle class="shot-chart-line" cx="255" cy="285" r="60" />
+        <line class="shot-chart-line" x1="35" y1="475" x2="35" y2="333" />
+        <line class="shot-chart-line" x1="475" y1="475" x2="475" y2="333" />
+        <path class="shot-chart-line" d="M 35 333 A 237.5 237.5 0 0 1 475 333" />
+        <path class="shot-chart-line" d="M 215 422.5 A 40 40 0 0 1 295 422.5" />
+        <line class="shot-chart-line" x1="225" y1="435" x2="285" y2="435" />
+        <circle class="shot-chart-hoop" cx="255" cy="422.5" r="7.5" />
+        ${dots}
+      </svg>
+      <div class="shot-chart-legend">
+        <span><i class="made"></i>Made</span>
+        <span><i class="missed"></i>Missed</span>
+        ${unknown ? `<span><i class="unknown"></i>Unclassified</span>` : ""}
+        <span class="shot-chart-legend-note">Dot size = model shot quality</span>
+      </div>
     </div>
   `;
 }

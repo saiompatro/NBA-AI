@@ -35,7 +35,7 @@ def _nba_get(url: str, timeout: int = 10) -> dict:
 from app.models.win_probability import WinProbabilityModel
 from app.services.injury_news_watch import InjuryNewsWatch
 from app.services.player_status_tracker import track as track_player_status
-from app.services.shot_quality_service import ShotQualityService
+from app.services.shot_quality_service import ShotQualityService, is_field_goal_action
 
 
 # How much each unit of (impact_delta_per_min * remaining_minutes) shifts logit(p).
@@ -49,6 +49,9 @@ _PLAYER_TABLE_TTL = 6 * 3600
 # Cap stored win-probability trend points per game (snapshots arrive ~every 3s,
 # so 1000 points covers regulation + several OTs with headroom).
 _WP_HISTORY_MAX = 1000
+
+# Field-goal actions are only plotted on the shot chart once a location is present.
+_SHOT_LOCATION_KEYS = ("shotDistance", "x", "y", "xLegacy", "yLegacy")
 
 
 @dataclass
@@ -77,6 +80,7 @@ class GameSnapshot:
     home_box_score: list[dict[str, Any]]
     away_box_score: list[dict[str, Any]]
     win_probability_history: list[float]
+    shot_chart: list[dict[str, Any]]
     events: list[str]
     source: str
     updated_at: str
@@ -151,6 +155,56 @@ def _parse_boxscore(data: dict, top_n: int = _BOX_SCORE_TOP_N) -> dict[str, list
     return result
 
 
+def _has_shot_location(action: dict[str, Any]) -> bool:
+    return any(action.get(key) not in (None, "") for key in _SHOT_LOCATION_KEYS)
+
+
+def _shot_action_key(action: dict[str, Any]) -> str:
+    """Stable per-shot identity used to dedupe across 3-second polls."""
+    number = action.get("actionNumber")
+    if number not in (None, ""):
+        return str(number)
+    return f"{action.get('period', '')}|{action.get('clock', '')}|{action.get('description', '')}"
+
+
+def _shot_result(action: dict[str, Any]) -> str:
+    """'made' | 'missed' | 'unknown' for one field-goal action."""
+    raw = str(action.get("shotResult") or "").strip().lower()
+    if raw.startswith("made"):
+        return "made"
+    if raw.startswith("miss"):
+        return "missed"
+    description = str(action.get("description") or "").lower()
+    if "misses" in description:
+        return "missed"
+    if "makes" in description:
+        return "made"
+    return "unknown"
+
+
+def _shot_value(action: dict[str, Any]) -> int:
+    action_type = action.get("actionType")
+    if action_type == "3pt":
+        return 3
+    if action_type == "2pt":
+        return 2
+    try:
+        return 3 if float(action.get("shotDistance") or 0) >= 22.0 else 2
+    except (TypeError, ValueError):
+        return 2
+
+
+def _action_score_diff(action: dict[str, Any], fallback: int) -> int:
+    """Home-minus-away score at the moment of the action, if the feed carries it."""
+    home, away = action.get("scoreHome"), action.get("scoreAway")
+    if home in (None, "") or away in (None, ""):
+        return fallback
+    try:
+        return int(home) - int(away)
+    except (TypeError, ValueError):
+        return fallback
+
+
 def _logit(p: float) -> float:
     p = max(0.001, min(0.999, p))
     return math.log(p / (1 - p))
@@ -179,6 +233,11 @@ class NBALiveFeed:
         # Home win-probability trend for the currently tracked game.
         self._wp_history_game_id: str | None = None
         self._wp_history: list[float] = []
+
+        # Field-goal attempts recorded so far for the currently tracked game.
+        self._shot_chart_game_id: str | None = None
+        self._shot_chart: list[dict[str, Any]] = []
+        self._shot_chart_seen: set[str] = set()
 
     # ------------------------------------------------------------------
     # Public API
@@ -344,6 +403,8 @@ class NBALiveFeed:
         if len(self._wp_history) > _WP_HISTORY_MAX:
             self._wp_history = self._wp_history[-_WP_HISTORY_MAX:]
 
+        shot_chart = self._update_shot_chart(game_id, actions, period, clock, score_diff)
+
         events = self._build_events(
             shot_quality_model=shot_quality_model,
             possession=possession,
@@ -383,10 +444,76 @@ class NBALiveFeed:
             home_box_score=home_box_score or [],
             away_box_score=away_box_score or [],
             win_probability_history=list(self._wp_history),
+            shot_chart=shot_chart,
             events=events,
             source=source,
             updated_at=datetime.now(timezone.utc).isoformat(),
         )
+
+    def _update_shot_chart(
+        self,
+        game_id: str,
+        actions: list[dict[str, Any]],
+        period: int,
+        clock: str,
+        score_diff: int,
+    ) -> list[dict[str, Any]]:
+        """Append every not-yet-seen field-goal attempt, deduped by action key.
+
+        Polls arrive every ~3 s regardless of whether a shot happened, and the
+        feed re-sends the full action list each time, so every action is scanned
+        and only unseen ones are scored and appended.
+        """
+        if self._shot_chart_game_id != game_id:
+            self._shot_chart_game_id = game_id
+            self._shot_chart = []
+            self._shot_chart_seen = set()
+
+        if self.shot_quality_service is None:
+            return list(self._shot_chart)
+
+        for action in actions or []:
+            try:
+                if not is_field_goal_action(action):
+                    continue
+                key = _shot_action_key(action)
+                if key in self._shot_chart_seen:
+                    continue
+                if not _has_shot_location(action):
+                    # No usable coordinates yet - skip WITHOUT marking it seen so a
+                    # later poll can pick it up once the feed fills the location in.
+                    continue
+                try:
+                    shot_period = int(action.get("period") or period)
+                except (TypeError, ValueError):
+                    shot_period = period
+                shot_clock_iso = action.get("clock") or clock
+                scored = self.shot_quality_service.score_action(
+                    action,
+                    shot_period,
+                    _time_remaining(shot_period, shot_clock_iso),
+                    _action_score_diff(action, score_diff),
+                )
+                self._shot_chart_seen.add(key)
+                self._shot_chart.append(
+                    {
+                        "action_number": key,
+                        "period": shot_period,
+                        "clock": shot_clock_iso,
+                        "team": action.get("teamTricode") or "",
+                        "player": action.get("playerNameI") or action.get("playerName") or "",
+                        "distance": scored.context.distance,
+                        "angle": scored.context.angle,
+                        "shot_quality": scored.shot_quality,
+                        "result": _shot_result(action),
+                        "shot_value": _shot_value(action),
+                        "description": action.get("description") or "",
+                    }
+                )
+            except Exception:
+                continue
+
+        return list(self._shot_chart)
 
     # ------------------------------------------------------------------
     # Impact helpers
