@@ -85,6 +85,20 @@ _FOUR_FACTORS_OREB_WEIGHT = 0.25  # each 1pt of OREB% edge is worth ~0.25 pts of
 _FOUR_FACTORS_FTR_WEIGHT = 0.15   # each 1pt of FT-rate edge is worth ~0.15 pts of margin
 _FOUR_FACTORS_CAP = 4.0          # hard cap on total margin swing from all four factors
 
+# Head-to-head matchup history. Two teams' own recent results against *each other*
+# carry matchup-specific information (a slow team that struggles with a fast opponent,
+# a bad style clash) that season-wide net rating and even the four factors average
+# away - Vegas books and public models alike still glance at the "series history"
+# column. But it is a tiny, noisy sample next to an 82-game season (and can be pure
+# home-court-advantage restated as a head-to-head record), so the edge is shrunk toward
+# zero for thin samples and hard-capped so a single blowout meeting can't run away with it.
+_H2H_SEASONS_BACK = 2         # current season plus this many prior seasons of meetings
+_H2H_MAX_GAMES = 10           # only the most recent meetings count
+_H2H_POINTS_PER_MARGIN = 0.25  # each point of average head-to-head margin is worth this much
+_H2H_CAP = 2.0                # hard cap on total margin swing from head-to-head history
+_H2H_MIN_GAMES = 2            # below this many meetings, treat the history as unknown
+_H2H_FULL_WEIGHT_GAMES = 6    # sample size at which the edge stops being shrunk further
+
 # Clutch-time (last 5 min, score within 5 pts) team performance. NBA.com Stats' own
 # "Clutch" tab and Cleaning the Glass both lead with this split because a team's
 # full-game net rating can hide who actually closes games out - our team profiles
@@ -926,6 +940,90 @@ class LeagueAnalyticsService:
             return _REST_DAYS_CAP
         return max(0, min(_REST_DAYS_CAP, (game_date - last_game).days - 1))
 
+    @lru_cache(maxsize=16)
+    def _league_game_log(self, season: str, season_type: str) -> pd.DataFrame:
+        """Raw team-level `leaguegamelog` frame for one season/season-type, used to
+        reconstruct real head-to-head meetings. A full season's game log is a much
+        bigger payload than the per-team dash endpoints we normally poll, so give it
+        more room than the default timeout before giving up on it."""
+        return self._stats_frame(
+            "leaguegamelog",
+            {
+                "LeagueID": "00",
+                "Season": season,
+                "SeasonType": season_type,
+                "PlayerOrTeam": "T",
+                "Sorter": "DATE",
+                "Direction": "DESC",
+                "Counter": "1000",
+                "DateFrom": "",
+                "DateTo": "",
+            },
+            "LeagueGameLog",
+            timeout=max(self.timeout, 15),
+        )
+
+    def head_to_head(self, away_abbr: str, home_abbr: str, seasons_back: int = _H2H_SEASONS_BACK) -> dict[str, Any]:
+        """Real completed-game results between two teams over the last `seasons_back`
+        seasons (regular season + playoffs), most recent meetings first. Feeds the
+        `h2h_margin_edge`/`h2h_summary` helpers below - never raises, since a bad
+        matchup or a down feed should just mean "no history", not a broken page."""
+        generated_at = datetime.now(timezone.utc).isoformat()
+        away_code = normalize_team_abbr(away_abbr)
+        home_code = normalize_team_abbr(home_abbr)
+        if home_code not in TEAM_BY_ABBR or away_code not in TEAM_BY_ABBR:
+            return _h2h_failure(home_code, away_code, "That matchup is not available in the playoff model yet.", generated_at)
+
+        seasons = _recent_seasons(seasons_back)
+        games: list[dict[str, Any]] = []
+        try:
+            for season in seasons:
+                for season_type in ("Regular Season", "Playoffs"):
+                    frame = self._league_game_log(season, season_type)
+                    games.extend(_extract_h2h_meetings(frame, home_code, away_code, season, season_type))
+        except Exception:
+            return _h2h_failure(home_code, away_code, "Head-to-head history is unavailable right now.", generated_at, seasons=seasons)
+
+        if not games:
+            return _h2h_failure(
+                home_code, away_code, "No recent meetings on record between these two teams.", generated_at, seasons=seasons
+            )
+
+        games.sort(key=lambda game: game["date"], reverse=True)
+        games = games[:_H2H_MAX_GAMES]
+
+        home_wins = sum(1 for game in games if game["winner"] == home_code)
+        away_wins = len(games) - home_wins
+        home_arena_games = [game for game in games if game["at_home"]]
+        home_arena_home_wins = sum(1 for game in home_arena_games if game["winner"] == home_code)
+
+        signed_margins = [game["margin"] if game["at_home"] else -game["margin"] for game in games]
+        avg_margin_home = sum(signed_margins) / len(signed_margins)
+        avg_margin_home_court = (
+            sum(game["margin"] for game in home_arena_games) / len(home_arena_games) if home_arena_games else None
+        )
+
+        return {
+            "ok": True,
+            "home": home_code,
+            "away": away_code,
+            "seasons": seasons,
+            "games_found": len(games),
+            "record": {"home_wins": home_wins, "away_wins": away_wins},
+            "home_court_record": {
+                "home_wins": home_arena_home_wins,
+                "away_wins": len(home_arena_games) - home_arena_home_wins,
+                "games": len(home_arena_games),
+            },
+            "avg_margin_home": round(avg_margin_home, 2),
+            "avg_margin_home_court": round(avg_margin_home_court, 2) if avg_margin_home_court is not None else None,
+            "last_meeting": games[0],
+            "games": games,
+            "margin_edge": round(h2h_margin_edge(avg_margin_home, len(games)), 2),
+            "summary": h2h_summary(home_code, away_code, home_wins, away_wins, avg_margin_home, len(games)),
+            "generated_at": generated_at,
+        }
+
     def game_prediction(self, away_abbr: str, home_abbr: str) -> dict[str, Any]:
         away_code = normalize_team_abbr(away_abbr)
         home_code = normalize_team_abbr(home_abbr)
@@ -1106,6 +1204,23 @@ class LeagueAnalyticsService:
                 f"so the pick leans more on overall margin, rest, and matchup context than shot quality."
             )
 
+        h2h_record = h2h.get("record") or {"home_wins": 0, "away_wins": 0}
+        winner_h2h_wins = h2h_record.get("home_wins", 0) if winner["abbr"] == home["abbr"] else h2h_record.get("away_wins", 0)
+        loser_h2h_wins = h2h_record.get("away_wins", 0) if winner["abbr"] == home["abbr"] else h2h_record.get("home_wins", 0)
+
+        winner_h2h_edge = h2h_edge if winner["abbr"] == home["abbr"] else -h2h_edge
+        if h2h.get("games_found", 0) >= _H2H_MIN_GAMES and abs(winner_h2h_edge) >= 0.25:
+            if winner_h2h_edge > 0:
+                summary_parts.append(
+                    f"{winner['abbr']} has also had the better of this head-to-head series recently, "
+                    f"which nudges the pick further their way."
+                )
+            else:
+                summary_parts.append(
+                    f"{loser['abbr']} has actually won more of the recent head-to-head meetings, so the pick "
+                    f"leans more on overall team strength than this series' own history."
+                )
+
         if sentiment_gap >= 0.2:
             summary_parts.append(
                 f"News sentiment also favors {winner['abbr']} ({winner_sentiment.get('label', 'Neutral').lower()}, "
@@ -1219,6 +1334,11 @@ class LeagueAnalyticsService:
                     "winner": f"{winner.get('efg_pct', 0):.1f}% eFG, {winner.get('tov_pct', 0):.1f}% TOV, {winner.get('oreb_pct', 0):.1f}% OREB, {winner.get('ftr', 0):.1f}% FTr",
                     "opponent": f"{loser.get('efg_pct', 0):.1f}% eFG, {loser.get('tov_pct', 0):.1f}% TOV, {loser.get('oreb_pct', 0):.1f}% OREB, {loser.get('ftr', 0):.1f}% FTr",
                 },
+                {
+                    "label": "Head to head",
+                    "winner": f"{winner_h2h_wins}-{loser_h2h_wins} last {h2h.get('games_found', 0)}" if h2h.get("games_found", 0) else "N/A",
+                    "opponent": f"{loser_h2h_wins}-{winner_h2h_wins} last {h2h.get('games_found', 0)}" if h2h.get("games_found", 0) else "N/A",
+                },
                 {"label": "News sentiment", "winner": f"{winner_sentiment.get('label', 'Neutral')} ({winner_sentiment.get('score', 0):+.2f})", "opponent": f"{loser_sentiment.get('label', 'Neutral')} ({loser_sentiment.get('score', 0):+.2f})"},
                 {"label": "Elo rating", "winner": round(winner_elo), "opponent": round(loser_elo)},
             ],
@@ -1324,13 +1444,15 @@ class LeagueAnalyticsService:
             "sources": sources_seen[:8],
         }
 
-    def _stats_frame(self, endpoint: str, params: dict[str, Any], result_name: str) -> pd.DataFrame:
+    def _stats_frame(
+        self, endpoint: str, params: dict[str, Any], result_name: str, timeout: int | None = None
+    ) -> pd.DataFrame:
         try:
             response = requests.get(
                 f"https://stats.nba.com/stats/{endpoint}",
                 params=params,
                 headers=NBAStatsHTTP.headers,
-                timeout=self.timeout,
+                timeout=timeout or self.timeout,
                 verify=False,
             )
             response.raise_for_status()

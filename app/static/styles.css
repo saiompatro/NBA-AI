@@ -1750,6 +1750,12 @@ select {
   font-weight: 650;
 }
 
+.prediction-result p.prediction-h2h {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
 .prediction-pick {
   display: flex;
   justify-content: space-between;
@@ -1920,6 +1926,22 @@ select {
 
 .compare-table td.compare-win {
   color: var(--green);
+}
+
+.matchup-picker {
+  margin-bottom: 18px;
+}
+
+.matchup-stats {
+  margin-bottom: 18px;
+}
+
+.matchup-home-row {
+  background: var(--accent-soft);
+}
+
+.matchup-home-row td:first-child {
+  border-left: 3px solid var(--accent);
 }
 
 .power-blurb {

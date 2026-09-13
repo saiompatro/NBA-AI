@@ -10,6 +10,8 @@ const state = {
   predictions: {},
   news: {},
   compare: { a: null, b: null },
+  matchups: { away: null, home: null },
+  h2h: {},
   gameLog: {},
   powerRankings: null,
   powerRankingsLoading: false,
@@ -46,6 +48,7 @@ const els = {
   alertsPage: document.getElementById("alertsPage"),
   predictionsPage: document.getElementById("predictionsPage"),
   comparePage: document.getElementById("comparePage"),
+  matchupsPage: document.getElementById("matchupsPage"),
   powerRankingsPage: document.getElementById("powerRankingsPage"),
   bracketPage: document.getElementById("bracketPage"),
   modelPerformancePage: document.getElementById("modelPerformancePage"),
@@ -176,6 +179,11 @@ function route() {
   if (section === "compare") {
     renderComparePage();
     setActivePage("comparePage", "compare");
+    return;
+  }
+  if (section === "matchups") {
+    renderMatchupsPage();
+    setActivePage("matchupsPage", "matchups");
     return;
   }
   if (section === "power-rankings") {
@@ -898,6 +906,7 @@ function renderPredictionResult(game, result) {
       <div class="probability-row compact"><span>${html(game.away)}</span><div><i style="width:${awayPct}%"></i></div><strong>${awayPct}%</strong></div>
       <div class="probability-row compact"><span>${html(game.home)}</span><div><i style="width:${homePct}%"></i></div><strong>${homePct}%</strong></div>
       <p>${html(result.summary)}</p>
+      ${result.head_to_head && result.head_to_head.games_found >= 2 ? `<p class="prediction-h2h">Head-to-head: ${html(result.head_to_head.summary)} (edge ${Number(result.head_to_head.margin_edge) > 0 ? "+" : ""}${result.head_to_head.margin_edge})</p>` : ""}
     </div>
   `;
 }
@@ -1019,6 +1028,121 @@ function renderComparePage() {
   `;
   els.comparePage.querySelector('[data-compare-select="a"]').value = state.compare.a;
   els.comparePage.querySelector('[data-compare-select="b"]').value = state.compare.b;
+}
+
+function h2hKey(away, home) {
+  return `${away}-${home}`;
+}
+
+function loadHeadToHead(away, home) {
+  const key = h2hKey(away, home);
+  const params = new URLSearchParams({ away, home });
+  fetch(`/api/head-to-head?${params.toString()}`)
+    .then((response) => response.json())
+    .then((data) => {
+      state.h2h[key] = data;
+      renderMatchupsPage();
+    })
+    .catch(() => {
+      state.h2h[key] = { ok: false, games: [], games_found: 0, message: "The matchup history could not load right now." };
+      renderMatchupsPage();
+    });
+}
+
+function setMatchupSelectValues(away, home) {
+  const awaySelect = els.matchupsPage.querySelector('[data-matchup-select="away"]');
+  const homeSelect = els.matchupsPage.querySelector('[data-matchup-select="home"]');
+  if (awaySelect) awaySelect.value = away;
+  if (homeSelect) homeSelect.value = home;
+}
+
+function renderMatchupsPage() {
+  const teamList = [...(state.analytics.teams || [])].sort((a, b) => a.team.localeCompare(b.team));
+  if (teamList.length < 2) {
+    els.matchupsPage.innerHTML = `<div class="page-heading"><div><h1>Matchups</h1><p>Not enough team data yet.</p></div></div>`;
+    return;
+  }
+  if (!state.matchups.away) state.matchups.away = teamList[0].abbr;
+  if (!state.matchups.home || state.matchups.home === state.matchups.away) {
+    const fallback = teamList.find((team) => team.abbr !== state.matchups.away);
+    state.matchups.home = fallback ? fallback.abbr : teamList[0].abbr;
+  }
+
+  const away = state.matchups.away;
+  const home = state.matchups.home;
+  const key = h2hKey(away, home);
+  const options = teamList.map((team) => `<option value="${html(team.abbr)}">${html(team.team)}</option>`).join("");
+  const teams = teamMap();
+
+  const heading = `<div class="page-heading"><div><h1>Matchups</h1><p>Head-to-head results between any two playoff teams over the current and prior season.</p></div></div>`;
+  const picker = `
+    <article class="panel compare-picker matchup-picker">
+      <div class="compare-card"><span><strong>${html(teams[away]?.team || away)}</strong><small>Away</small></span></div>
+      <span class="compare-vs">@</span>
+      <div class="compare-card"><span><strong>${html(teams[home]?.team || home)}</strong><small>Home</small></span></div>
+      <select data-matchup-select="away" aria-label="Away team">${options}</select>
+      <span></span>
+      <select data-matchup-select="home" aria-label="Home team">${options}</select>
+    </article>
+  `;
+
+  if (!state.h2h[key]) {
+    if (!state.h2h[`${key}:loading`]) {
+      state.h2h[`${key}:loading`] = true;
+      loadHeadToHead(away, home);
+    }
+    els.matchupsPage.innerHTML = `${heading}${picker}<article class="panel"><p class="footer-note">Loading head-to-head history...</p></article>`;
+    setMatchupSelectValues(away, home);
+    return;
+  }
+
+  const result = state.h2h[key];
+  if (!result.games || !result.games.length) {
+    els.matchupsPage.innerHTML = `
+      ${heading}${picker}
+      <article class="panel"><p class="footer-note">${html(result.message || "No recent meetings on record between these two teams.")}</p></article>
+    `;
+    setMatchupSelectValues(away, home);
+    return;
+  }
+
+  const avgMargin = Number(result.avg_margin_home || 0);
+  const tiles = `
+    <section class="card-stats matchup-stats">
+      <div><span>Series Record</span><strong>${result.record.home_wins}-${result.record.away_wins}</strong></div>
+      <div><span>Avg Margin (${html(home)})</span><strong class="${avgMargin >= 0 ? "positive" : "concern"}">${avgMargin > 0 ? "+" : ""}${avgMargin.toFixed(1)}</strong></div>
+      <div><span>Meetings at ${html(home)}</span><strong>${result.home_court_record.games}</strong></div>
+      <div><span>Total Meetings</span><strong>${result.games_found}</strong></div>
+    </section>
+  `;
+
+  const rows = result.games.map((game) => `
+    <tr class="${game.at_home ? "matchup-home-row" : ""}">
+      <td>${html(game.date)}</td>
+      <td>${html(game.season)}</td>
+      <td>${html(game.season_type)}</td>
+      <td>${html(game.away)} @ ${html(game.home)}</td>
+      <td>${html(game.label)}</td>
+      <td class="${game.margin >= 0 ? "positive" : "concern"}">${game.margin > 0 ? "+" : ""}${game.margin}</td>
+      <td>${html(game.winner)}</td>
+    </tr>
+  `).join("");
+
+  els.matchupsPage.innerHTML = `
+    ${heading}
+    ${picker}
+    ${tiles}
+    <article class="panel">
+      <p class="footer-note">${html(result.summary)}</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Season</th><th>Type</th><th>Matchup</th><th>Score</th><th>Margin</th><th>Winner</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    </article>
+  `;
+  setMatchupSelectValues(away, home);
 }
 
 function renderPowerRankingsPage() {
@@ -1364,10 +1488,18 @@ els.playerSortFilter.addEventListener("change", () => {
 });
 
 document.addEventListener("change", (event) => {
-  const select = event.target.closest("[data-compare-select]");
-  if (!select) return;
-  state.compare[select.dataset.compareSelect] = select.value;
-  renderComparePage();
+  const compareSelect = event.target.closest("[data-compare-select]");
+  if (compareSelect) {
+    state.compare[compareSelect.dataset.compareSelect] = compareSelect.value;
+    renderComparePage();
+    return;
+  }
+
+  const matchupSelect = event.target.closest("[data-matchup-select]");
+  if (matchupSelect) {
+    state.matchups[matchupSelect.dataset.matchupSelect] = matchupSelect.value;
+    renderMatchupsPage();
+  }
 });
 
 document.addEventListener("click", (event) => {

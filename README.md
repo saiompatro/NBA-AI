@@ -113,6 +113,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
 | GET    | `/api/model-performance`                                      | Backtested accuracy/log-loss for the pre-game model |
 | GET    | `/api/game-prediction?away=DET&home=CLE`                      | Matchup prediction with plain-English summary |
+| GET    | `/api/head-to-head?away=DET&home=CLE`                         | Real head-to-head results between two teams   |
 | GET    | `/api/news?type=team&team=DET&term=Detroit+Pistons&refresh=1` | Contextual ESPN news                          |
 | GET    | `/api/shot-quality`                                           | Model metadata and feature importance         |
 | GET    | `/teams/<slug>`                                               | Team profile page                             |
@@ -135,6 +136,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/teams/<slug>`        | Team profile         |
 | `#/predictions`         | Game prediction tool |
 | `#/compare`              | Player comparison    |
+| `#/matchups`             | Head-to-head matchup history |
 | `#/power-rankings`      | Power rankings        |
 | `#/bracket`              | Playoff bracket        |
 | `#/model`               | Model accuracy         |
@@ -156,6 +158,7 @@ This project uses the following **public, unauthenticated** data sources. No API
   - `nba_api.stats.endpoints.leaguedashteamstats` — season team stats
   - `nba_api.stats.endpoints.leaguestandingsv3` — full-league regular-season standings
   - `nba_api.stats.endpoints.playoffpicture` — playoff bracket picture
+  - `nba_api.stats.endpoints.leaguegamelog` — real per-game results, used to reconstruct head-to-head matchup history
 - **Data owner:** NBA Stats (`stats.nba.com`) — data is property of the NBA. Use is subject to [NBA Terms of Use](https://www.nba.com/tos).
 
 ### ESPN Public APIs
