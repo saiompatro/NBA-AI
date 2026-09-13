@@ -75,6 +75,10 @@ def create_app() -> Flask:
         news = analytics._aggregated_news()
         return jsonify({"season": season, "power_rankings": analytics.power_rankings(season, news)})
 
+    @app.get("/api/standings")
+    def standings():
+        return jsonify(analytics.league_standings(current_season()))
+
     @app.get("/api/schedule")
     def schedule():
         return jsonify({"upcoming_games": analytics.upcoming_games()})
