@@ -27,6 +27,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Power rankings** — all 16 playoff teams ranked by net rating blended with last-10 form (not raw record), with a plain-English blurb and a record-vs-power movement indicator per team
 - **Playoff bracket** — series scores grouped by conference and round (First Round / Conf. Semifinals / Conf. Finals / NBA Finals), sourced from the same live `scoreboardv3` series data the standings already computed but the UI never surfaced
 - **Model accuracy page** — backtested win-pick accuracy, log loss, and games/seasons used to fit the pre-game model, versus a home-favorite baseline (the topbar "Model Accuracy" KPI is now wired to this same number instead of a static placeholder), plus the shot-quality model's R²/MAE on a synthetic holdout (labeled as such — there's no real-shot ground truth to backtest against)
+- **Shot profile** — every team profile shows a 5-zone shot chart (Restricted Area, Paint, Mid-Range, Corner 3, Above-the-Break 3) with frequency share, FG%, and points-per-shot per zone (NBA Stats `leaguedashteamshotlocations`), plus a "3PA Rate" KPI in the team analytics grid
 
 ## Tech Stack
 
@@ -151,6 +152,7 @@ This project uses the following **public, unauthenticated** data sources. No API
   - `nba_api.stats.endpoints.scoreboardv3` — extended scoreboard
   - `nba_api.stats.endpoints.leaguedashplayerstats` — season player stats
   - `nba_api.stats.endpoints.leaguedashteamstats` — season team stats
+  - `nba_api.stats.endpoints.leaguedashteamshotlocations` — shot-location zone splits (frequency/FG%/PPS by zone)
   - `nba_api.stats.endpoints.playoffpicture` — playoff bracket picture
 - **Data owner:** NBA Stats (`stats.nba.com`) — data is property of the NBA. Use is subject to [NBA Terms of Use](https://www.nba.com/tos).
 

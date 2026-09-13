@@ -1573,6 +1573,64 @@ select {
   font-size: 1rem;
 }
 
+.zone-table {
+  display: grid;
+  gap: 6px;
+}
+
+.zone-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.6fr) 44px 52px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.zone-row-head {
+  border: none;
+  background: none;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.zone-label {
+  font-weight: 700;
+}
+
+.zone-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.zone-bar-track {
+  position: relative;
+  flex: 1;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--line);
+  overflow: hidden;
+}
+
+.zone-bar-track i {
+  display: block;
+  height: 100%;
+  background: var(--team-primary, var(--orange));
+  border-radius: 4px 0 0 4px;
+}
+
+.zone-bar b {
+  flex: 0 0 auto;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
 .player-card {
   display: grid;
   grid-template-columns: 76px 1fr;
@@ -2143,5 +2201,13 @@ select {
     width: 100%;
     height: auto;
     aspect-ratio: 16 / 9;
+  }
+
+  .zone-row {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) 40px;
+  }
+
+  .zone-row span:nth-child(4) {
+    display: none;
   }
 }

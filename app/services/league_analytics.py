@@ -97,6 +97,32 @@ _CLUTCH_POINT_DIFF = "5"
 # NBA.com Stats and Basketball-Reference both lead player pages with true-shooting%,
 # usage%, and an all-in-one impact number (PIE) instead of just points/rebounds/assists.
 
+# Shot-location zone profile. The shot-quality model already reasons about shot distance
+# and angle internally, but nowhere in the product did a single real shot-location number
+# surface - Cleaning the Glass, NBA.com's own shot dashboards, and Basketball-Reference all
+# lead with where a team takes its shots (frequency, accuracy, and points-per-shot by zone),
+# not just the box-score FG%. Pulled from the dedicated NBA Stats `leaguedashteamshotlocations`
+# endpoint (a new data source - this response shape isn't the flat resultSets list every other
+# endpoint here returns, see `parse_shot_location_columns`). Left/Right Corner 3 are merged and
+# Backcourt is dropped, matching Cleaning the Glass's 5-zone shot chart convention.
+SHOT_ZONES = [
+    {"api_name": "Restricted Area", "label": "Restricted Area", "key": "rim", "points": 2},
+    {"api_name": "In The Paint (Non-RA)", "label": "Paint (Non-RA)", "key": "paint", "points": 2},
+    {"api_name": "Mid-Range", "label": "Mid-Range", "key": "midrange", "points": 2},
+    {"api_name": "Left Corner 3", "label": "Corner 3", "key": "corner3", "points": 3},
+    {"api_name": "Right Corner 3", "label": "Corner 3", "key": "corner3", "points": 3},
+    {"api_name": "Above the Break 3", "label": "Above the Break 3", "key": "atb3", "points": 3},
+]
+# League-average shot-selection shape (frequency%, FG%), used only as a fallback shape when
+# the live endpoint is unreachable - see `shot_zone_fallback`. Frequencies sum to 100.
+_LEAGUE_SHOT_ZONE_SHAPE = [
+    {"key": "rim", "zone": "Restricted Area", "points": 2, "freq": 32.0, "fg_pct": 63.0},
+    {"key": "paint", "zone": "Paint (Non-RA)", "points": 2, "freq": 12.0, "fg_pct": 42.0},
+    {"key": "midrange", "zone": "Mid-Range", "points": 2, "freq": 11.0, "fg_pct": 41.0},
+    {"key": "corner3", "zone": "Corner 3", "points": 3, "freq": 8.0, "fg_pct": 39.0},
+    {"key": "atb3", "zone": "Above the Break 3", "points": 3, "freq": 37.0, "fg_pct": 35.0},
+]
+
 
 @lru_cache(maxsize=1)
 def load_pregame_calibration() -> dict[str, float]:
@@ -227,6 +253,7 @@ class LeagueAnalyticsService:
                 "NBA Stats API scoreboardv3",
                 "NBA Stats API leaguedashplayerstats",
                 "NBA Stats API leaguedashteamstats",
+                "NBA Stats API leaguedashteamshotlocations",
                 "ESPN public scoreboard/news API",
                 "Yahoo Sports NBA RSS",
                 "CBS Sports NBA RSS",
@@ -251,6 +278,7 @@ class LeagueAnalyticsService:
 
         advanced_by_id = self._advanced_team_stats(season)
         clutch_by_id = self._clutch_team_stats(season)
+        shot_zone_by_id = self._shot_zone_team_stats(season)
 
         rows = []
         for team in PLAYOFF_SEEDS_2026:
@@ -267,6 +295,10 @@ class LeagueAnalyticsService:
             fallback_clutch = clutch_fallback(plus_minus)
             fga = float(stats.get("FGA", 0))
             ftr = round(float(stats.get("FTA", 0)) / fga * 100, 1) if fga else fallback_adv["ftr"]
+            efg_pct = round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"]
+            zone_totals = shot_zone_by_id.get(int(team["team_id"]))
+            shot_profile = shot_zone_profile(zone_totals) if zone_totals else shot_zone_fallback(efg_pct)
+            three_rate = round(sum(row["freq"] for row in shot_profile if row["key"] in ("corner3", "atb3")), 1)
             rows.append(
                 {
                     **team,
@@ -287,7 +319,7 @@ class LeagueAnalyticsService:
                     "off_rtg": round(float(adv["OFF_RATING"]), 1) if adv else fallback_adv["off_rtg"],
                     "def_rtg": round(float(adv["DEF_RATING"]), 1) if adv else fallback_adv["def_rtg"],
                     "pace": round(float(adv["PACE"]), 1) if adv else fallback_adv["pace"],
-                    "efg_pct": round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"],
+                    "efg_pct": efg_pct,
                     "ts_pct": round(float(adv["TS_PCT"]) * 100, 1) if adv else fallback_adv["ts_pct"],
                     "tov_pct": round(float(adv["TM_TOV_PCT"]) * 100, 1) if adv else fallback_adv["tov_pct"],
                     "oreb_pct": round(float(adv["OREB_PCT"]) * 100, 1) if adv else fallback_adv["oreb_pct"],
@@ -297,6 +329,8 @@ class LeagueAnalyticsService:
                     "last10": simulated_last10(playoff_wins, playoff_losses),
                     "streak": streak_from_net(plus_minus),
                     "sentiment": sentiment,
+                    "shot_profile": shot_profile,
+                    "three_rate": three_rate,
                 }
             )
         return rows
@@ -335,6 +369,39 @@ class LeagueAnalyticsService:
             return {}
         for column in ["TEAM_ID", "W", "L", "PLUS_MINUS"]:
             if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+        return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
+
+    def _shot_location_frame(self, season: str) -> pd.DataFrame:
+        """Raw `leaguedashteamshotlocations` frame. Not a `_stats_frame` call: this
+        endpoint's response shape needs the dedicated two-tier header parser above."""
+        try:
+            params = common_dash_params(season, "Playoffs", "Totals")
+            params["DistanceRange"] = "By Zone"
+            response = requests.get(
+                "https://stats.nba.com/stats/leaguedashteamshotlocations",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_set = response.json().get("resultSets", {})
+            columns = parse_shot_location_columns(result_set.get("headers", []))
+            if not columns:
+                return pd.DataFrame()
+            return pd.DataFrame(result_set.get("rowSet", []), columns=columns)
+        except Exception:
+            return pd.DataFrame()
+
+    @lru_cache(maxsize=4)
+    def _shot_zone_team_stats(self, season: str) -> dict[int, dict[str, Any]]:
+        """Per-team shot-location zone totals (FGM/FGA per zone), see `shot_zone_profile`."""
+        frame = self._shot_location_frame(season)
+        if frame.empty:
+            return {}
+        for column in frame.columns:
+            if column != "TEAM_NAME":
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
@@ -1464,6 +1531,96 @@ def clutch_fallback(net_rating: float) -> dict[str, Any]:
     """Deterministic clutch-time stand-in when the NBA Stats clutch endpoint is
     unreachable, derived from season net rating so it stays internally consistent."""
     return {"clutch_record": "0-0", "clutch_net": round(net_rating / 3, 1)}
+
+
+def _zone_column_key(api_name: str) -> str:
+    """`"In The Paint (Non-RA)"` -> `"IN_THE_PAINT_NON_RA"` - must match the flattening
+    done in `parse_shot_location_columns` so lookups by zone name find the same column."""
+    return api_name.upper().replace(" ", "_").replace("(", "").replace(")", "").replace("-", "_")
+
+
+def parse_shot_location_columns(headers: list[dict[str, Any]]) -> list[str]:
+    """Flatten `leaguedashteamshotlocations`' two-tier header into flat column names.
+
+    Unlike every other NBA Stats endpoint this service calls, this one's single result
+    set has a `headers` value that is itself a *pair* of header-group dicts instead of a
+    flat list of column-name strings: `headers[0]` names the 7 shot zones (each spanning
+    3 columns), and `headers[1]` is the flat FGM/FGA/FG_PCT column names repeated once per
+    zone plus the 2 leading TEAM_ID/TEAM_NAME columns it "skips". `_stats_frame` assumes a
+    flat header list and can't parse this, so this dedicated parser produces column names
+    like `RESTRICTED_AREA_FGA` that `shot_zone_profile` reads back by zone.
+    """
+    if len(headers) < 2:
+        return []
+    zone_group, base_group = headers[0], headers[1]
+    zone_names = zone_group.get("columnNames", [])
+    base_names = base_group.get("columnNames", [])
+    skip = zone_group.get("columnsToSkip", 0)
+    columns = list(base_names[:skip])
+    metric_names = base_names[skip:]
+    per_zone = len(metric_names) // len(zone_names) if zone_names else 0
+    for i, zone_name in enumerate(zone_names):
+        zone_key = _zone_column_key(zone_name)
+        for j in range(per_zone):
+            columns.append(f"{zone_key}_{metric_names[i * per_zone + j]}")
+    return columns
+
+
+def shot_zone_profile(zone_totals: dict[str, Any]) -> list[dict[str, Any]]:
+    """Turn a flattened shot-locations row into a 5-zone profile: each zone's share of
+    total field-goal attempts, FG%, and points-per-shot. Left/Right Corner 3 are merged
+    into one "Corner 3" row (see `SHOT_ZONES`); Backcourt heaves are dropped entirely."""
+    merged: dict[str, dict[str, float]] = {}
+    order: list[str] = []
+    for zone in SHOT_ZONES:
+        prefix = _zone_column_key(zone["api_name"])
+        fga = float(zone_totals.get(f"{prefix}_FGA", 0) or 0)
+        fgm = float(zone_totals.get(f"{prefix}_FGM", 0) or 0)
+        if zone["key"] not in merged:
+            merged[zone["key"]] = {"label": zone["label"], "points": zone["points"], "fga": 0.0, "fgm": 0.0}
+            order.append(zone["key"])
+        merged[zone["key"]]["fga"] += fga
+        merged[zone["key"]]["fgm"] += fgm
+
+    total_fga = sum(row["fga"] for row in merged.values())
+    rows = []
+    for key in order:
+        row = merged[key]
+        fg_pct = round(row["fgm"] / row["fga"] * 100, 1) if row["fga"] else 0.0
+        rows.append(
+            {
+                "key": key,
+                "zone": row["label"],
+                "fga": round(row["fga"], 1),
+                "freq": round(row["fga"] / total_fga * 100, 1) if total_fga else 0.0,
+                "fg_pct": fg_pct,
+                "pps": round((fg_pct / 100) * row["points"], 2) if row["fga"] else 0.0,
+            }
+        )
+    return rows
+
+
+def shot_zone_fallback(efg_pct: float) -> list[dict[str, Any]]:
+    """Deterministic shot-zone profile stand-in when the NBA Stats shot-locations
+    endpoint is unreachable: the league-average shot-selection shape (`_LEAGUE_SHOT_ZONE_SHAPE`),
+    with each zone's FG% scaled by how the team's own eFG% compares to the 53.0 league-average
+    baseline `advanced_fallback` already assumes, so the fallback stays internally consistent
+    with the rest of the team's (also-fallback) shooting numbers."""
+    scale = (efg_pct / 53.0) if efg_pct else 1.0
+    rows = []
+    for zone in _LEAGUE_SHOT_ZONE_SHAPE:
+        fg_pct = round(min(75.0, max(20.0, zone["fg_pct"] * scale)), 1)
+        rows.append(
+            {
+                "key": zone["key"],
+                "zone": zone["zone"],
+                "fga": 0.0,
+                "freq": zone["freq"],
+                "fg_pct": fg_pct,
+                "pps": round((fg_pct / 100) * zone["points"], 2),
+            }
+        )
+    return rows
 
 
 def form_margin_edge(home_last10: str, away_last10: str) -> float:
