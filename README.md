@@ -112,6 +112,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/teams`                                                  | Playoff team data                             |
 | GET    | `/api/standings`                                              | Full-league (30-team) regular-season standings, east/west |
 | GET    | `/api/schedule`                                               | Upcoming games                                |
+| GET    | `/api/scoreboard?date=YYYY-MM-DD`                             | Full day's scoreboard (pre/live/final games), defaults to today |
 | GET    | `/api/power-rankings`                                         | Teams ranked by net rating + recent form      |
 | GET    | `/api/model-performance`                                      | Backtested accuracy/log-loss for the pre-game model |
 | GET    | `/api/game-prediction?away=DET&home=CLE`                      | Matchup prediction with plain-English summary |
@@ -136,6 +137,7 @@ The frontend is a single-page app driven by hash routes:
 | `#/players/<slug>-<id>` | Player profile       |
 | `#/teams`               | Team list            |
 | `#/teams/<slug>`        | Team profile         |
+| `#/schedule`            | Schedule & scores     |
 | `#/predictions`         | Game prediction tool |
 | `#/matchup/<away>-<home>` | Matchup preview     |
 | `#/compare`              | Player comparison    |
