@@ -814,6 +814,7 @@ function renderTeamDetail(slug) {
           <div><span>TOV%</span><strong>${team.tov_pct}</strong></div>
           <div><span>OREB%</span><strong>${team.oreb_pct}</strong></div>
           <div><span>FT RATE</span><strong>${team.ftr}</strong></div>
+          <div><span>3PA RATE</span><strong>${team.three_rate}</strong></div>
           <div><span>CLUTCH REC</span><strong>${team.clutch_record}</strong></div>
           <div><span>CLUTCH NET</span><strong class="${team.clutch_net >= 0 ? "positive" : "concern"}">${team.clutch_net > 0 ? "+" : ""}${team.clutch_net}</strong></div>
         </div>
@@ -823,9 +824,37 @@ function renderTeamDetail(slug) {
         </div>
       </aside>
     </section>
+    ${shotProfilePanel(team)}
     ${newsPanel({ key, title: "Latest Team News", type: "team", id: team.abbr, team: team.abbr, terms })}
   `;
   if (!state.news[key]) loadEntityNews({ key, type: "team", team: team.abbr, terms });
+}
+
+function shotProfilePanel(team) {
+  const zones = team.shot_profile || [];
+  if (!zones.length) return "";
+  const maxFreq = Math.max(...zones.map((zone) => zone.freq), 1);
+  return `
+    <article class="profile-panel">
+      <div class="panel-heading"><h2>Shot Profile</h2><span>Share of FGA by zone</span></div>
+      <div class="zone-table">
+        <div class="zone-row zone-row-head">
+          <span>Zone</span><span>Frequency</span><span>FG%</span><span>PPS</span>
+        </div>
+        ${zones.map((zone) => `
+          <div class="zone-row">
+            <span class="zone-label">${html(zone.zone)}</span>
+            <span class="zone-bar">
+              <span class="zone-bar-track"><i style="width:${Math.max((zone.freq / maxFreq) * 100, 3)}%"></i></span>
+              <b>${zone.freq}%</b>
+            </span>
+            <span>${zone.fg_pct}%</span>
+            <span>${zone.pps}</span>
+          </div>
+        `).join("")}
+      </div>
+    </article>
+  `;
 }
 
 function renderPlayerDetail(slug) {
