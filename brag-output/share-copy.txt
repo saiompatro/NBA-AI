@@ -1,0 +1,3 @@
+NBA Live Predictor.
+Every shot has a number — XGBoost scores the shot, PyTorch runs the win probability, live over WebSocket every 3 seconds.
+3,680 games fit. 68.1% pre-game accuracy.

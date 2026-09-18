@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from functools import lru_cache
@@ -300,6 +301,7 @@ class LeagueAnalyticsService:
                 "NBA Stats API leaguedashplayerstats",
                 "NBA Stats API leaguedashteamstats",
                 "NBA Stats API leaguestandingsv3",
+                "ESPN current team roster API",
                 "ESPN public scoreboard/news API",
                 "Yahoo Sports NBA RSS",
                 "CBS Sports NBA RSS",
@@ -613,8 +615,9 @@ class LeagueAnalyticsService:
             common_dash_params(season, "Playoffs", "PerGame"),
             "LeagueDashPlayerStats",
         )
+        current_roster = self._espn_rotation_players(news)
         if frame.empty:
-            return self._espn_rotation_players(news) or fallback_players()
+            return current_roster or fallback_players()
 
         numeric = ["PLAYER_ID", "TEAM_ID", "PTS", "REB", "AST", "STL", "BLK", "PLUS_MINUS", "FG_PCT", "FG3_PCT", "FT_PCT", "GP", "MIN", "TOV"]
         for column in numeric:
@@ -632,6 +635,70 @@ class LeagueAnalyticsService:
             + frame.get("PLUS_MINUS", 0) * 0.4
         )
         advanced_by_player = self._advanced_player_stats(season)
+
+        # A completed season's playoff rows retain the team a player represented in
+        # those playoffs.  During the summer that is historical data, not a current
+        # roster.  ESPN's team roster endpoint is already used by the fallback path;
+        # make that current snapshot authoritative for membership and only layer the
+        # NBA Stats numbers onto it.  This removes departures, moves traded/free-agent
+        # players to their new clubs, and keeps new arrivals who had no playoff row.
+        if current_roster:
+            stats_by_name: dict[str, dict[str, Any]] = {}
+            for item in frame.sort_values(["MIN", "GP", "PTS"], ascending=False).to_dict("records"):
+                stats_by_name.setdefault(player_name_key(item.get("PLAYER_NAME", "")), item)
+
+            for player in current_roster:
+                item = stats_by_name.get(player_name_key(player.get("player", "")))
+                if not item:
+                    continue
+                player_id = int(item.get("PLAYER_ID", 0))
+                plus_minus = float(item.get("PLUS_MINUS", 0))
+                impact = float(item.get("IMPACT", 0))
+                minutes = float(item.get("MIN", 0))
+                points = float(item.get("PTS", 0))
+                adv = advanced_by_player.get(player_id)
+                fallback_adv = player_advanced_fallback(points, minutes, impact)
+                player.update(
+                    {
+                        "id": player_id or player["id"],
+                        "headshot": player_headshot_url(player_id) if player_id else player["headshot"],
+                        "gp": int(item.get("GP", 0)),
+                        "min": round(minutes, 1),
+                        "pts": round(points, 1),
+                        "reb": round(float(item.get("REB", 0)), 1),
+                        "ast": round(float(item.get("AST", 0)), 1),
+                        "stl": round(float(item.get("STL", 0)), 1),
+                        "blk": round(float(item.get("BLK", 0)), 1),
+                        "fg_pct": round(float(item.get("FG_PCT", 0)) * 100, 1),
+                        "fg3_pct": round(float(item.get("FG3_PCT", 0)) * 100, 1),
+                        "ft_pct": round(float(item.get("FT_PCT", 0)) * 100, 1),
+                        "plus_minus": round(plus_minus, 1),
+                        "impact": round(impact, 1),
+                        "ts_pct": round(float(adv["TS_PCT"]) * 100, 1) if adv else fallback_adv["ts_pct"],
+                        "usg_pct": round(float(adv["USG_PCT"]) * 100, 1) if adv else fallback_adv["usg_pct"],
+                        "pie": round(float(adv["PIE"]) * 100, 1) if adv else fallback_adv["pie"],
+                        "trend": player_trend(points, plus_minus),
+                        "sentiment": self._sentiment_for_terms(
+                            news,
+                            [player["player"], player["team"], player["team_name"]],
+                            plus_minus,
+                        ),
+                        "stats_source": f"NBA Stats {season} playoffs",
+                    }
+                )
+
+            rows: list[dict[str, Any]] = []
+            for team in PLAYOFF_SEEDS_2026:
+                rotation = sorted(
+                    (player for player in current_roster if player["team"] == team["abbr"]),
+                    key=lambda player: (player.get("min", 0), player.get("gp", 0), player.get("pts", 0)),
+                    reverse=True,
+                )
+                for index, player in enumerate(rotation):
+                    player["rotation_rank"] = index + 1
+                    player["role"] = "Starting 5" if index < 5 else "Bench"
+                    rows.append(player)
+            return rows
 
         rows = []
         for team_id, group in frame.groupby("TEAM_ID"):
@@ -842,28 +909,27 @@ class LeagueAnalyticsService:
 
     def _espn_rotation_players(self, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
-        session = requests.Session()
+        rosters = self._espn_current_rosters()
+        if not rosters:
+            return rows
+        nba_ids = nba_player_ids_by_name()
         for team in PLAYOFF_SEEDS_2026:
-            code = ESPN_TEAM_CODES.get(team["abbr"], team["abbr"].lower())
-            try:
-                response = session.get(
-                    f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{code}/roster",
-                    timeout=self.timeout,
-                    verify=False,
-                )
-                response.raise_for_status()
-                athletes = response.json().get("athletes", [])
-            except Exception:
-                athletes = []
+            athletes = rosters.get(team["abbr"], [])
             for index, athlete in enumerate(athletes):
                 name = athlete.get("displayName") or athlete.get("fullName") or "Player"
                 rank = index + 1
                 stats = synthetic_player_stats(team["seed"], rank)
                 plus_minus = stats["plus_minus"]
                 adv_fallback = player_advanced_fallback(stats["pts"], stats["min"], stats["impact"])
+                nba_id = nba_ids.get(player_name_key(name), 0)
+                # ESPN and NBA use different athlete ids.  Prefer the NBA id so
+                # game logs, shot charts, and CDN headshots continue to work.  A
+                # stable high-range fallback keeps new rookies uniquely routable
+                # until nba_api's bundled player list catches up.
+                player_id = nba_id or 90_000_000 + int(athlete.get("id") or index)
                 rows.append(
                     {
-                        "id": int(athlete.get("id") or abs(hash(f"{team['abbr']}-{name}")) % 10000000),
+                        "id": player_id,
                         "slug": slugify(str(name)),
                         "player": name,
                         "team": team["abbr"],
@@ -872,7 +938,7 @@ class LeagueAnalyticsService:
                         "team_slug": slugify(team["team"]),
                         "role": "Starting 5" if index < 5 else "Bench",
                         "rotation_rank": rank,
-                        "headshot": (athlete.get("headshot") or {}).get("href") or player_headshot_url(0),
+                        "headshot": (athlete.get("headshot") or {}).get("href") or player_headshot_url(nba_id),
                         "gp": 0,
                         "min": stats["min"],
                         "pts": stats["pts"],
@@ -890,9 +956,43 @@ class LeagueAnalyticsService:
                         "pie": adv_fallback["pie"],
                         "trend": player_trend(stats["pts"], plus_minus),
                         "sentiment": self._sentiment_for_terms(news, [str(name), team["abbr"], team["team"]], plus_minus),
+                        "roster_source": "ESPN current team roster",
+                        "stats_source": "estimated (no prior playoff row)",
                     }
                 )
         return rows
+
+    def _espn_current_rosters(self) -> dict[str, list[dict[str, Any]]]:
+        # Keep long-running dashboard processes current as late-summer signings land.
+        hour_bucket = int(datetime.now(timezone.utc).timestamp() // 3600)
+        return self._espn_current_rosters_for_hour(hour_bucket)
+
+    @lru_cache(maxsize=4)
+    def _espn_current_rosters_for_hour(self, _hour_bucket: int) -> dict[str, list[dict[str, Any]]]:
+        """Fetch one current roster snapshot for every tracked team.
+
+        Return an empty mapping if even one team fails.  A partial snapshot would
+        silently erase a whole club from the UI, which is worse than falling back
+        to the NBA Stats postseason rows for that request.
+        """
+        rosters: dict[str, list[dict[str, Any]]] = {}
+        session = requests.Session()
+        for team in PLAYOFF_SEEDS_2026:
+            code = ESPN_TEAM_CODES.get(team["abbr"], team["abbr"].lower())
+            try:
+                response = session.get(
+                    f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/{code}/roster",
+                    timeout=self.timeout,
+                    verify=False,
+                )
+                response.raise_for_status()
+                athletes = response.json().get("athletes", [])
+            except Exception:
+                return {}
+            if not athletes:
+                return {}
+            rosters[team["abbr"]] = athletes
+        return rosters
 
     def leaders(self, season: str, news: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
         players = self.playoff_players(season, news)
@@ -2457,6 +2557,30 @@ def streak_from_net(net: float) -> str:
     if net <= -8:
         return "L4"
     return "L1"
+
+
+def player_name_key(name: Any) -> str:
+    """Normalize ESPN/NBA spelling differences for cross-source roster joins."""
+    decomposed = unicodedata.normalize("NFKD", str(name or ""))
+    ascii_name = "".join(char for char in decomposed if not unicodedata.combining(char))
+    alphanumeric = "".join(char.lower() if char.isalnum() else " " for char in ascii_name)
+    return " ".join(alphanumeric.split())
+
+
+@lru_cache(maxsize=1)
+def nba_player_ids_by_name() -> dict[str, int]:
+    """Current/bundled NBA player ids keyed for matching against ESPN rosters."""
+    try:
+        from nba_api.stats.static import players as nba_static_players
+
+        entries = sorted(nba_static_players.get_players(), key=lambda item: bool(item.get("is_active")))
+        return {
+            player_name_key(entry.get("full_name")): int(entry["id"])
+            for entry in entries
+            if entry.get("full_name") and entry.get("id")
+        }
+    except Exception:
+        return {}
 
 
 @lru_cache(maxsize=1)

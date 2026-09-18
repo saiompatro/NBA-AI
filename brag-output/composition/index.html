@@ -1,0 +1,1045 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>NBA Live Predictor — Brag</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      @font-face {
+        font-family: "Inter";
+        font-style: normal;
+        font-weight: 100 900;
+        font-display: block;
+        src: url("assets/fonts/inter-latin.woff2") format("woff2");
+      }
+
+      /* Palette lifted verbatim from app/static/styles.css :root[data-theme="dark"] */
+      :root {
+        --ink: #eef1f6;
+        --ink-2: #cfd6e0;
+        --muted: #9aa5b3;
+        --subtle: #6d7787;
+        --line: #232a35;
+        --line-strong: #323b48;
+        --page: #0b0e14;
+        --surface: #121722;
+        --surface-2: #171d29;
+        --sidebar: #05070a;
+        --accent: #ed4f1c;
+        --accent-dark: #c4380e;
+        --accent-soft: #2a1c16;
+        --green: #1f7a4d;
+        --radius: 4px;
+      }
+
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        width: 1920px;
+        height: 1080px;
+        overflow: hidden;
+        background: #000;
+      }
+
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        font-family: "Inter", sans-serif;
+        color: var(--ink);
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* Untimed full-bleed layers need their own positioning (no auto layout). */
+      .bed {
+        position: absolute;
+        inset: 0;
+        background: var(--sidebar);
+      }
+
+      .clip {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+
+      /* ---- Cinematic frame furniture (untimed, always on top) ---- */
+      .bars {
+        position: absolute;
+        inset: 0;
+        z-index: 90;
+        pointer-events: none;
+      }
+      .bars::before,
+      .bars::after {
+        content: "";
+        position: absolute;
+        left: 0;
+        right: 0;
+        height: 132px;
+        background: #000;
+      }
+      .bars::before {
+        top: 0;
+      }
+      .bars::after {
+        bottom: 0;
+      }
+
+      .grain {
+        position: absolute;
+        inset: 0;
+        z-index: 91;
+        opacity: 0.055;
+        mix-blend-mode: overlay;
+        pointer-events: none;
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23n)'/%3E%3C/svg%3E");
+      }
+
+      .vignette {
+        position: absolute;
+        inset: 0;
+        z-index: 89;
+        pointer-events: none;
+        background: radial-gradient(ellipse 78% 68% at 50% 48%, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.62) 100%);
+      }
+
+      /* Arena light haze — the one music-coupled visual. */
+      .haze {
+        position: absolute;
+        opacity: 0.72;
+        width: 1500px;
+        height: 1100px;
+        left: 90px;
+        top: -180px;
+        border-radius: 50%;
+        filter: blur(150px);
+        background: radial-gradient(circle, rgba(237, 79, 28, 0.42) 0%, rgba(237, 79, 28, 0.12) 45%, rgba(237, 79, 28, 0) 72%);
+      }
+
+      /* The safe band between the letterbox bars. */
+      .band {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 132px;
+        height: 816px;
+      }
+
+      /* ---------------- Scene 1 — the arc ---------------- */
+      #s1 {
+        background: var(--sidebar);
+      }
+      #s1-arc {
+        position: absolute;
+        inset: 0;
+      }
+      #s1-arc path,
+      #s1-arc circle {
+        fill: none;
+        stroke: var(--accent);
+      }
+      #s1-hook {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 606px;
+        display: flex;
+        justify-content: center;
+      }
+      #s1-hook-line {
+        display: block;
+        font-size: 96px;
+        font-weight: 800;
+        letter-spacing: -0.028em;
+        text-transform: uppercase;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+      #s1-kicker {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 738px;
+        display: flex;
+        justify-content: center;
+      }
+      #s1-kicker-line {
+        display: block;
+        font-size: 24px;
+        font-weight: 500;
+        letter-spacing: 0.34em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* ---------------- Scene 2 — the court ---------------- */
+      #s2 {
+        background: var(--page);
+      }
+      #s2-stage {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 132px;
+        height: 816px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #s2-court {
+        display: block;
+        width: 744px;
+        height: 700px;
+      }
+      #s2-court .court-line {
+        fill: none;
+        stroke: var(--ink);
+        stroke-opacity: 0.3;
+        stroke-width: 1.6;
+      }
+      #s2-court .court-hoop {
+        fill: none;
+        stroke: var(--accent);
+        stroke-opacity: 0.85;
+        stroke-width: 2.4;
+      }
+      #s2-court .dot {
+        stroke-width: 0;
+      }
+      #s2-court .dot.made {
+        fill: var(--accent);
+        fill-opacity: 0.92;
+      }
+      #s2-court .dot.missed {
+        fill: #323b48;
+      }
+      #s2-court #s2-hero-ring {
+        fill: none;
+        stroke: var(--accent);
+        stroke-width: 1.6;
+      }
+      #s2-mark {
+        position: absolute;
+        left: 108px;
+        top: 196px;
+        font-size: 30px;
+        font-weight: 700;
+        letter-spacing: 0.26em;
+        text-transform: uppercase;
+      }
+      #s2-mark em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      #s2-caption {
+        position: absolute;
+        left: 108px;
+        bottom: 196px;
+        font-size: 22px;
+        font-weight: 500;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      /* ---------------- Scene 3/4 — the dashboard ---------------- */
+      #s3 {
+        background: var(--page);
+      }
+      #s3-camera {
+        position: absolute;
+        inset: 0;
+      }
+      #s3-haze {
+        opacity: 0.42;
+      }
+      #s5-haze {
+        opacity: 0.5;
+      }
+      #s3-ui {
+        position: absolute;
+        left: 100px;
+        top: 250px;
+        width: 1720px;
+        height: auto;
+        display: grid;
+        grid-template-columns: 280px 1392px;
+        gap: 48px;
+      }
+
+      .side {
+        background: var(--sidebar);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 26px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+      }
+      .side-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 21px;
+        font-weight: 700;
+        letter-spacing: -0.01em;
+        color: #f4f4f1;
+      }
+      .ball {
+        width: 34px;
+        height: 34px;
+        flex: 0 0 34px;
+        border: 2px solid var(--accent);
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        color: var(--accent);
+      }
+      .side-brand em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      .side-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .side-link {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 9px 12px;
+        border-radius: var(--radius);
+        font-size: 17px;
+        font-weight: 500;
+        color: #9aa5b3;
+      }
+      .side-link.active {
+        background: rgba(237, 79, 28, 0.1);
+        color: #f4f4f1;
+        box-shadow: inset 3px 0 0 var(--accent);
+      }
+      .side-dot {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 50%;
+        background: #323b48;
+      }
+      .side-link.active .side-dot {
+        background: var(--accent);
+      }
+      .side-season {
+        margin-top: auto;
+        border-top: 1px solid #1a1f29;
+        padding-top: 18px;
+        font-size: 15px;
+        color: #6f7988;
+        line-height: 1.5;
+      }
+      .side-season strong {
+        display: block;
+        color: #f4f4f1;
+        font-weight: 700;
+      }
+
+      .main {
+        display: flex;
+        flex-direction: column;
+        gap: 26px;
+        min-width: 0;
+      }
+      .topbar {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 22px;
+        height: 34px;
+        font-size: 17px;
+        color: var(--muted);
+      }
+      .topbar strong {
+        color: var(--ink-2);
+        font-weight: 600;
+      }
+      .live-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-weight: 600;
+        color: var(--ink-2);
+      }
+      .live-chip i {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 0 4px rgba(31, 122, 77, 0.22);
+      }
+
+      .kpi-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 30px;
+      }
+      .kpi-card {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 26px 28px;
+        display: flex;
+        align-items: center;
+        gap: 22px;
+      }
+      .kpi-icon {
+        width: 58px;
+        height: 58px;
+        flex: 0 0 58px;
+        border-radius: var(--radius);
+        background: var(--accent-soft);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .kpi-icon span {
+        width: 22px;
+        height: 22px;
+        border: 2.5px solid var(--accent);
+        border-radius: 3px;
+        display: block;
+      }
+      .kpi-icon.round span {
+        border-radius: 50%;
+      }
+      .kpi-value {
+        font-size: 46px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        line-height: 1;
+      }
+      .kpi-label {
+        margin-top: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .panel {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        padding: 24px 28px 20px;
+        flex: 0 0 auto;
+      }
+      .panel-heading {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--line);
+      }
+      .panel-heading h2 {
+        font-size: 19px;
+        font-weight: 700;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+      }
+      .panel-heading span {
+        font-size: 17px;
+        color: var(--muted);
+      }
+      .game-row {
+        display: grid;
+        grid-template-columns: 96px 1fr 168px;
+        align-items: center;
+        gap: 20px;
+        padding: 17px 0;
+        border-bottom: 1px solid var(--line);
+      }
+      .game-row:last-child {
+        border-bottom: 0;
+      }
+      .game-time {
+        font-size: 19px;
+        font-weight: 600;
+        color: var(--muted);
+      }
+      .game-teams {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+      }
+      .game-team {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 21px;
+        font-weight: 600;
+      }
+      .game-team i {
+        width: 22px;
+        height: 22px;
+        border-radius: 50%;
+        border: 2px solid var(--line-strong);
+        display: block;
+      }
+      .game-team b {
+        font-size: 15px;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        color: #77818f;
+      }
+      .pick-chip {
+        justify-self: end;
+        min-width: 132px;
+        text-align: center;
+        background: var(--accent-soft);
+        border: 1px solid rgba(237, 79, 28, 0.32);
+        border-radius: var(--radius);
+        padding: 13px 0;
+        font-size: 21px;
+        font-weight: 700;
+        color: var(--accent);
+      }
+      .action-button {
+        justify-self: end;
+        min-width: 152px;
+        text-align: center;
+        background: var(--accent);
+        border-radius: var(--radius);
+        padding: 14px 0;
+        font-size: 19px;
+        font-weight: 700;
+        color: #0a0e14;
+      }
+
+      #s3-cursor {
+        position: absolute;
+        left: 1050px;
+        top: 560px;
+        width: 30px;
+        height: 42px;
+      }
+
+      /* Payoff overlay */
+      #s4-payoff {
+        position: absolute;
+        left: 370px;
+        top: 282px;
+        width: 1180px;
+        background: var(--surface);
+        border: 1px solid var(--line-strong);
+        border-radius: var(--radius);
+        padding: 44px 52px 48px;
+        box-shadow: 0 60px 140px rgba(0, 0, 0, 0.72);
+      }
+      #s4-payoff .eyebrow {
+        font-size: 17px;
+        font-weight: 600;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      #s4-pick {
+        margin-top: 18px;
+        display: flex;
+        align-items: baseline;
+        gap: 26px;
+        font-weight: 800;
+        letter-spacing: -0.035em;
+        line-height: 1;
+      }
+      #s4-pick .team {
+        font-size: 104px;
+      }
+      #s4-pick .pct {
+        font-size: 104px;
+        color: var(--accent);
+      }
+      #s4-reason {
+        margin-top: 22px;
+        max-width: 1010px;
+        font-size: 30px;
+        font-weight: 400;
+        line-height: 1.42;
+        color: var(--ink-2);
+      }
+      #s4-wp {
+        margin-top: 30px;
+        border-top: 1px solid var(--line);
+        padding-top: 22px;
+      }
+      #s4-wp .wp-heading {
+        display: flex;
+        justify-content: space-between;
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      #s4-wp svg {
+        display: block;
+        width: 1076px;
+        height: 132px;
+        margin-top: 12px;
+      }
+      .wp-mid {
+        stroke: #3d4756;
+        stroke-width: 1.5;
+        stroke-dasharray: 5 6;
+      }
+      .wp-line {
+        fill: none;
+        stroke: var(--accent);
+        stroke-width: 3;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      /* ---------------- Scene 5 — receipts + mark ---------------- */
+      #s5 {
+        background: var(--sidebar);
+      }
+      #s5-ghost {
+        position: absolute;
+        left: 260px;
+        top: 380px;
+        width: 1400px;
+        height: 320px;
+        opacity: 0.12;
+      }
+      #s5-ghost svg {
+        display: block;
+        width: 100%;
+        height: 100%;
+      }
+      #s5-stats {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 132px;
+        height: 816px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 26px;
+      }
+      .stat-line {
+        display: block;
+        font-size: 66px;
+        font-weight: 800;
+        letter-spacing: -0.022em;
+        text-transform: uppercase;
+        color: var(--ink);
+        white-space: nowrap;
+      }
+      .stat-line em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      #s5-mark {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 132px;
+        height: 816px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 30px;
+      }
+      #s5-mark-row {
+        display: flex;
+        align-items: center;
+        gap: 24px;
+      }
+      #s5-mark-row .ball {
+        width: 74px;
+        height: 74px;
+        flex: 0 0 74px;
+        border-width: 3px;
+        font-size: 22px;
+      }
+      #s5-mark-word {
+        font-size: 74px;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+      }
+      #s5-mark-word em {
+        font-style: normal;
+        color: var(--accent);
+      }
+      #s5-tag {
+        display: block;
+        font-size: 30px;
+        font-weight: 500;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="23"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div class="bed"></div>
+
+      <!-- ======================= SCENE 1 — the arc ======================= -->
+      <section id="s1" class="clip" data-layout-allow-occlusion data-start="0" data-duration="3.7" data-track-index="0">
+        <div id="s1-haze" class="haze"></div>
+        <svg id="s1-arc" viewBox="0 0 1920 1080" xmlns="http://www.w3.org/2000/svg">
+          <path
+            id="s1-arc-path"
+            d="M 220 620 Q 800 120 1420 360"
+            stroke-width="2.4"
+            stroke-linecap="round"
+            pathLength="1"
+          />
+          <circle id="s1-ring" cx="1420" cy="360" r="26" stroke-width="2.6" />
+        </svg>
+        <div id="s1-hook"><span id="s1-hook-line">Every shot has a number.</span></div>
+        <div id="s1-kicker"><span id="s1-kicker-line">NBA Live Predictor</span></div>
+      </section>
+
+      <!-- ===================== SCENE 2 — the court ====================== -->
+      <section id="s2" class="clip" data-layout-allow-occlusion data-start="3.7" data-duration="4.22" data-track-index="0">
+        <div id="s2-haze" class="haze"></div>
+        <div id="s2-stage">
+          <!-- Geometry copied verbatim from app/static/dashboard.js -> shotChart() -->
+          <svg id="s2-court" viewBox="0 0 510 480" xmlns="http://www.w3.org/2000/svg">
+            <g id="s2-lines">
+              <rect class="court-line" x="5" y="5" width="500" height="470" rx="2" pathLength="1" />
+              <rect class="court-line" x="175" y="285" width="160" height="190" pathLength="1" />
+              <circle class="court-line" cx="255" cy="285" r="60" pathLength="1" />
+              <line class="court-line" x1="35" y1="475" x2="35" y2="333" pathLength="1" />
+              <line class="court-line" x1="475" y1="475" x2="475" y2="333" pathLength="1" />
+              <path class="court-line" d="M 35 333 A 237.5 237.5 0 0 1 475 333" pathLength="1" />
+              <path class="court-line" d="M 215 422.5 A 40 40 0 0 1 295 422.5" pathLength="1" />
+              <line class="court-line" x1="225" y1="435" x2="285" y2="435" pathLength="1" />
+            </g>
+            <circle class="court-hoop" cx="255" cy="422.5" r="7.5" pathLength="1" />
+            <g id="s2-dots">
+              <circle class="dot missed" cx="107.2" cy="233.4" r="6.1" />
+              <circle class="dot made" cx="415.7" cy="231.0" r="6.3" />
+              <circle class="dot made" cx="303.0" cy="330.0" r="7.4" />
+              <circle class="dot missed" cx="191.3" cy="264.8" r="6.8" />
+              <circle class="dot missed" cx="255.0" cy="168.0" r="6.0" />
+              <circle class="dot made" cx="207.0" cy="374.0" r="7.9" />
+              <circle class="dot missed" cx="488.0" cy="398.0" r="6.4" />
+              <circle class="dot made" cx="24.0" cy="402.0" r="5.7" />
+            </g>
+            <circle id="s2-hero" class="dot made" cx="256.3" cy="407.5" r="8.6" />
+            <circle id="s2-hero-ring" cx="256.3" cy="407.5" r="8.6" />
+          </svg>
+        </div>
+        <div id="s2-mark">NBA <em>Live</em> Predictor</div>
+        <div id="s2-caption">Dot size = model shot quality</div>
+      </section>
+
+      <!-- ============= SCENE 3/4 — the dashboard, one camera ============ -->
+      <section id="s3" class="clip" data-layout-allow-occlusion data-start="7.92" data-duration="9.46" data-track-index="0" data-layout-allow-overflow>
+        <div id="s3-camera" data-layout-allow-overflow>
+          <div id="s3-haze" class="haze"></div>
+          <div id="s3-ui">
+            <aside class="side" id="s3-side">
+              <div class="side-brand"><span class="ball">NBA</span>NBA <em>Live</em>&nbsp;Predictor</div>
+              <nav class="side-nav">
+                <span class="side-link"><i class="side-dot"></i>Live</span>
+                <span class="side-link active"><i class="side-dot"></i>Table</span>
+                <span class="side-link"><i class="side-dot"></i>Players</span>
+                <span class="side-link"><i class="side-dot"></i>Teams</span>
+                <span class="side-link"><i class="side-dot"></i>Schedule</span>
+                <span class="side-link"><i class="side-dot"></i>Predictions</span>
+                <span class="side-link"><i class="side-dot"></i>Power Rankings</span>
+                <span class="side-link"><i class="side-dot"></i>Shot Chart</span>
+                <span class="side-link"><i class="side-dot"></i>Model Accuracy</span>
+              </nav>
+              <div class="side-season">NBA Season 2025-26<strong>Playoffs</strong></div>
+            </aside>
+
+            <div class="main">
+              <div class="topbar" id="s3-topbar">
+                <span>Data updated: <strong>19:41:58</strong></span>
+                <span class="live-chip"><i></i>Live Data</span>
+              </div>
+
+              <div class="kpi-grid">
+                <article class="kpi-card" id="s3-kpi1">
+                  <span class="kpi-icon"><span></span></span>
+                  <div>
+                    <div class="kpi-value">16</div>
+                    <div class="kpi-label">Playoff Teams</div>
+                  </div>
+                </article>
+                <article class="kpi-card" id="s3-kpi2">
+                  <span class="kpi-icon round"><span></span></span>
+                  <div>
+                    <div class="kpi-value">78.4%</div>
+                    <div class="kpi-label">Model Accuracy</div>
+                  </div>
+                </article>
+                <article class="kpi-card" id="s3-kpi3">
+                  <span class="kpi-icon"><span></span></span>
+                  <div>
+                    <div class="kpi-value">2.1M+</div>
+                    <div class="kpi-label">Events Analyzed</div>
+                  </div>
+                </article>
+              </div>
+
+              <section class="panel" id="s3-games">
+                <div class="panel-heading">
+                  <h2>Upcoming Games</h2>
+                  <span>Monday 11 May</span>
+                </div>
+                <div class="game-row">
+                  <span class="game-time">5:30</span>
+                  <div class="game-teams">
+                    <span class="game-team"><i></i>Detroit Pistons <b>DET</b></span>
+                    <span class="game-team"><i></i>Cleveland Cavaliers <b>CLE</b></span>
+                  </div>
+                  <span class="pick-chip">DET 66%</span>
+                </div>
+                <div class="game-row">
+                  <span class="game-time">8:00</span>
+                  <div class="game-teams">
+                    <span class="game-team"><i></i>Oklahoma City Thunder <b>OKC</b></span>
+                    <span class="game-team"><i></i>Los Angeles Lakers <b>LAL</b></span>
+                  </div>
+                  <span class="action-button" id="s3-run">Run Model</span>
+                </div>
+              </section>
+            </div>
+          </div>
+
+          <svg id="s3-cursor" viewBox="0 0 30 42" xmlns="http://www.w3.org/2000/svg">
+            <path
+              d="M 3 2 L 3 32 L 11 25 L 16 38 L 22 35 L 17 23 L 27 22 Z"
+              fill="#eef1f6"
+              stroke="#05070a"
+              stroke-width="2"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+
+        <div id="s4-payoff">
+          <div class="eyebrow">Model prediction &middot; OKC @ LAL</div>
+          <div id="s4-pick"><span class="team">OKC</span><span class="pct">78%</span></div>
+          <p id="s4-reason">
+            The Thunder get the edge because their overall team rating is stronger in this matchup.
+          </p>
+          <div id="s4-wp">
+            <div class="wp-heading"><span>LAL</span><span>Win probability trend</span><span>OKC</span></div>
+            <svg viewBox="0 0 1076 132" xmlns="http://www.w3.org/2000/svg">
+              <line class="wp-mid" x1="0" y1="66" x2="1076" y2="66" />
+              <polyline
+                id="s4-wp-line"
+                class="wp-line"
+                pathLength="1"
+                points="12,75.6 99.7,70.8 187.3,76.8 275,66 362.7,69.6 450.3,60 538,63.6 625.7,52.8 713.3,56.4 801,45.6 888.7,40.8 976.3,32.4 1064,22.8"
+              />
+            </svg>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================ SCENE 5 — receipts and the mark =============== -->
+      <section id="s5" class="clip" data-layout-allow-occlusion data-start="17.38" data-duration="5.62" data-track-index="0">
+        <div id="s5-haze" class="haze"></div>
+        <div id="s5-ghost">
+          <svg viewBox="0 0 1076 132" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+            <polyline
+              class="wp-line"
+              points="12,75.6 99.7,70.8 187.3,76.8 275,66 362.7,69.6 450.3,60 538,63.6 625.7,52.8 713.3,56.4 801,45.6 888.7,40.8 976.3,32.4 1064,22.8"
+            />
+          </svg>
+        </div>
+        <div id="s5-stats">
+          <span class="stat-line" id="s5-stat1"><em>3,680</em> games fit</span>
+          <span class="stat-line" id="s5-stat2"><em>68.1%</em> pre-game accuracy</span>
+          <span class="stat-line" id="s5-stat3">Updated every <em>3 seconds</em></span>
+        </div>
+        <div id="s5-mark">
+          <div id="s5-mark-row">
+            <span class="ball">NBA</span>
+            <span id="s5-mark-word">NBA <em>Live</em> Predictor</span>
+          </div>
+          <span id="s5-tag">The game is live. So is the model.</span>
+        </div>
+      </section>
+
+      <div class="vignette" data-layout-allow-occlusion></div>
+      <div class="bars"></div>
+      <div class="grain"></div>
+
+      <!-- ============================ AUDIO ============================ -->
+      <audio
+        id="bgm"
+        src="assets/music/bed.mp3"
+        data-start="0"
+        data-duration="23"
+        data-track-index="10"
+        data-volume="1"
+      ></audio>
+
+      <audio id="sfx-slam" src="assets/sfx/impactSoft_heavy_002.ogg" data-start="1.07" data-duration="0.6" data-track-index="11" data-volume="0.72"></audio>
+      <audio id="sfx-kpi1" src="assets/sfx/impactSoft_medium_000.ogg" data-start="8.44" data-duration="0.16" data-track-index="11" data-volume="0.3"></audio>
+      <audio id="sfx-kpi2" src="assets/sfx/impactSoft_medium_000.ogg" data-start="8.96" data-duration="0.16" data-track-index="11" data-volume="0.3"></audio>
+      <audio id="sfx-kpi3" src="assets/sfx/impactSoft_medium_000.ogg" data-start="9.5" data-duration="0.16" data-track-index="11" data-volume="0.3"></audio>
+      <audio id="sfx-click" src="assets/sfx/click2.ogg" data-start="12.12" data-duration="0.1" data-track-index="11" data-volume="0.42"></audio>
+      <audio id="sfx-pick" src="assets/sfx/impactSoft_heavy_004.ogg" data-start="12.65" data-duration="0.55" data-track-index="11" data-volume="0.88"></audio>
+      <audio id="sfx-mark" src="assets/sfx/impactBell_heavy_000.ogg" data-start="20.54" data-duration="1.2" data-track-index="11" data-volume="0.58"></audio>
+    </div>
+
+    <script>
+      // Beat/cue source: assets/music/bed.music-cues.json (114.84 BPM).
+      // Strong-cue locks used (3): 3.70 scene turn, 7.92 dashboard, 12.65 the pick.
+      const build = () => {
+        const tl = gsap.timeline({ paused: true });
+
+        /* -------------------------------------------------- SCENE 1 */
+        tl.fromTo("#s1-arc-path", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 0.92, ease: "power2.inOut" }, 0.14);
+        tl.fromTo("#s1-ring", { scale: 0.4, opacity: 0, transformOrigin: "1420px 360px" }, { scale: 1, opacity: 1, duration: 0.42, ease: "power3.out" }, 1.0);
+        tl.fromTo("#s1-ring", { strokeWidth: 2.6 }, { strokeWidth: 1.2, duration: 0.7, ease: "power2.out", immediateRender: false }, 1.42);
+
+        // beat-locked: 1.07s — the hook slams, then holds ~2.6s (5 words, well over the read floor).
+        tl.fromTo("#s1-hook-line", { yPercent: 26, opacity: 0, scale: 1.05 }, { yPercent: 0, opacity: 1, scale: 1, duration: 0.44, ease: "power4.out" }, 1.07);
+        tl.fromTo("#s1-kicker-line", { opacity: 0, y: 14 }, { opacity: 1, y: 0, duration: 0.8, ease: "power2.out" }, 1.44);
+
+        // Slow arena drift + music-coupled haze swells on the beat grid (no extraction needed).
+        tl.fromTo("#s1-haze", { xPercent: -10 }, { xPercent: 6, duration: 3.7, ease: "none" }, 0);
+        tl.to("#s1-haze", { opacity: 1, duration: 0.14, ease: "power2.out" }, 1.07);
+        tl.to("#s1-haze", { opacity: 0.78, duration: 0.5, ease: "power2.out" }, 1.21);
+        tl.to(["#s1-arc-path", "#s1-ring", "#s1-hook-line", "#s1-kicker-line"], { opacity: 0, duration: 0.34, ease: "power2.in" }, 3.3);
+
+        /* -------------------------------------------------- SCENE 2 */
+        // beat-locked: 3.70s — the ring becomes the court.
+        tl.fromTo("#s2-court", { scale: 0.86, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.85, ease: "power3.out" }, 3.7);
+        tl.fromTo(
+          "#s2-lines .court-line",
+          { strokeDasharray: 1, strokeDashoffset: 1 },
+          { strokeDashoffset: 0, duration: 0.8, ease: "power2.out", stagger: 0.045 },
+          3.78
+        );
+        tl.fromTo("#s2-court .court-hoop", { scale: 0.3, opacity: 0, transformOrigin: "255px 422.5px" }, { scale: 1, opacity: 1, duration: 0.4, ease: "back.out(2)" }, 4.5);
+
+        // beat-grid: 8 shot dots from 4.75s, 0.14s apart (non-text accents, no SFX — this is a broadcast open).
+        gsap.utils.toArray("#s2-dots .dot").forEach((dot, i) => {
+          const o = dot.getAttribute("cx") + "px " + dot.getAttribute("cy") + "px";
+          tl.fromTo(dot, { scale: 0, opacity: 0, transformOrigin: o }, { scale: 1, opacity: 1, duration: 0.3, ease: "back.out(2.4)" }, 4.75 + i * 0.14);
+        });
+
+        // beat-locked: 6.34s — the highest-quality shot of the set lands at the rim.
+        tl.fromTo("#s2-hero", { scale: 0, opacity: 0, transformOrigin: "256.3px 407.5px" }, { scale: 1, opacity: 1, duration: 0.34, ease: "back.out(2.6)" }, 6.34);
+        tl.fromTo("#s2-hero-ring", { scale: 1, opacity: 0.9, transformOrigin: "256.3px 407.5px" }, { scale: 4.2, opacity: 0, duration: 0.85, ease: "power2.out" }, 6.34);
+
+        tl.fromTo("#s2-mark", { opacity: 0, x: -22 }, { opacity: 1, x: 0, duration: 0.55, ease: "power3.out" }, 5.28);
+        tl.fromTo("#s2-caption", { opacity: 0, x: -22 }, { opacity: 1, x: 0, duration: 0.55, ease: "power3.out" }, 6.5);
+        tl.fromTo("#s2-haze", { xPercent: 4 }, { xPercent: -8, duration: 4.22, ease: "none" }, 3.7);
+        tl.to("#s2-haze", { opacity: 0.95, duration: 0.14 }, 6.34);
+        tl.to("#s2-haze", { opacity: 0.66, duration: 0.5 }, 6.48);
+        tl.to(["#s2-stage", "#s2-mark", "#s2-caption"], { opacity: 0, duration: 0.3, ease: "power2.in" }, 7.6);
+
+        /* ------------------------------------------------ SCENE 3/4 */
+        // beat-locked: 7.92s — one continuous push-in carries the whole dashboard beat.
+        tl.fromTo("#s3-camera", { scale: 1.02, opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 7.92);
+        tl.to("#s3-camera", { scale: 1.07, duration: 9.46, ease: "none" }, 7.92);
+        tl.fromTo("#s3-haze", { xPercent: -6 }, { xPercent: 6, duration: 9.46, ease: "none" }, 7.92);
+
+        tl.fromTo("#s3-side", { opacity: 0, x: -40 }, { opacity: 1, x: 0, duration: 0.6, ease: "power3.out" }, 7.98);
+        tl.fromTo("#s3-topbar", { opacity: 0 }, { opacity: 1, duration: 0.5, ease: "power2.out" }, 8.2);
+
+        // beat-grid: KPI cards at 8.44 / 8.96 / 9.50, then the full set holds 1.5s before anything else moves.
+        [
+          ["#s3-kpi1", 8.44],
+          ["#s3-kpi2", 8.96],
+          ["#s3-kpi3", 9.5],
+        ].forEach(([sel, at]) => {
+          tl.fromTo(sel, { opacity: 0, y: 34 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, at);
+        });
+
+        tl.fromTo("#s3-games", { opacity: 0, y: 40 }, { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" }, 11.06);
+
+        // Simulated interaction: cursor travels to Run Model and presses it.
+        tl.fromTo("#s3-cursor", { opacity: 0, x: -170, y: 120 }, { opacity: 1, duration: 0.3, ease: "power2.out" }, 11.5);
+        tl.to("#s3-cursor", { x: 0, y: 0, duration: 0.62, ease: "power2.inOut" }, 11.5);
+        tl.to("#s3-cursor", { scale: 0.82, duration: 0.08, ease: "power2.in" }, 12.12);
+        tl.to("#s3-cursor", { scale: 1, duration: 0.14, ease: "power2.out" }, 12.2);
+        tl.to("#s3-run", { scale: 0.96, duration: 0.09, ease: "power2.in" }, 12.12);
+        tl.to("#s3-run", { scale: 1, duration: 0.16, ease: "power2.out" }, 12.21);
+        tl.call(() => { document.getElementById("s3-run").textContent = "Running..."; }, null, 12.14);
+        tl.to("#s3-cursor", { opacity: 0, duration: 0.2, ease: "power2.in" }, 12.5);
+
+        // beat-locked: 12.65s (strongest cue in the window) — the pick lands.
+        tl.to("#s3-ui", { opacity: 0, duration: 0.4, ease: "power2.in" }, 12.52);
+        tl.fromTo("#s4-payoff", { opacity: 0, scale: 0.94, y: 26 }, { opacity: 1, scale: 1, y: 0, duration: 0.5, ease: "power4.out" }, 12.65);
+        tl.fromTo("#s4-payoff .eyebrow", { opacity: 0 }, { opacity: 1, duration: 0.35 }, 12.8);
+        tl.fromTo("#s4-pick .team", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 12.86);
+        tl.fromTo("#s4-pick .pct", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.4, ease: "power3.out" }, 12.98);
+        // 14 words of product copy — in at 13.18s, held 4.2s to the scene edge.
+        tl.fromTo("#s4-reason", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.45, ease: "power3.out" }, 13.18);
+        tl.fromTo("#s4-wp", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 13.6);
+        tl.fromTo("#s4-wp-line", { strokeDasharray: 1, strokeDashoffset: 1 }, { strokeDashoffset: 0, duration: 1.35, ease: "power1.inOut" }, 13.7);
+        tl.to("#s4-payoff", { opacity: 0, duration: 0.3, ease: "power2.in" }, 17.08);
+
+        /* -------------------------------------------------- SCENE 5 */
+        tl.fromTo("#s5-ghost", { opacity: 0, scale: 1.08 }, { opacity: 0.12, scale: 1, duration: 1.2, ease: "power2.out" }, 17.38);
+        tl.fromTo("#s5-haze", { xPercent: 8 }, { xPercent: -6, duration: 5.62, ease: "none" }, 17.38);
+
+        // Revealed 0.53s apart, then the whole set holds ~1.5s — sequential text is never read one-per-beat here.
+        [
+          ["#s5-stat1", 17.91],
+          ["#s5-stat2", 18.44],
+          ["#s5-stat3", 18.96],
+        ].forEach(([sel, at]) => {
+          tl.fromTo(sel, { opacity: 0, y: 30 }, { opacity: 1, y: 0, duration: 0.42, ease: "power3.out" }, at);
+        });
+        tl.to("#s5-stats", { opacity: 0, y: -26, duration: 0.42, ease: "power2.in" }, 20.2);
+
+        // beat-locked: 20.54s — the mark lands as the bed falls away.
+        tl.fromTo("#s5-mark-row", { opacity: 0, scale: 0.93 }, { opacity: 1, scale: 1, duration: 0.55, ease: "power4.out" }, 20.54);
+        tl.fromTo("#s5-tag", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 20.82);
+        tl.to("#s5-ghost", { opacity: 0.05, duration: 0.6, ease: "power2.out" }, 20.54);
+
+        /* ---------------------------------------------- AUDIO MIX */
+        tl.fromTo("#bgm", { volume: 0 }, { volume: 0.45, duration: 1.1, ease: "power1.out" }, 0);
+        tl.to("#bgm", { volume: 0.6, duration: 0.7, ease: "power1.inOut" }, 7.6);
+        tl.to("#bgm", { volume: 0.5, duration: 0.5, ease: "power1.out" }, 12.45);
+        tl.to("#bgm", { volume: 0.56, duration: 0.8, ease: "power1.inOut" }, 17.38);
+        tl.to("#bgm", { volume: 0, duration: 1.4, ease: "power2.in" }, 21.5);
+
+        window.__timelines["main"] = tl;
+        tl.seek(0);
+      };
+
+      if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(build);
+      } else {
+        build();
+      }
+    </script>
+  </body>
+</html>

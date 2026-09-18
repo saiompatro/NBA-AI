@@ -19,7 +19,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
 - **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, an Elo rating replayed from real results over the last 3 seasons (538 NBA Elo methodology), injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and the full four factors (eFG%, TOV%, OREB%, FT rate)
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
-- **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering)
+- **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering); current ESPN rosters are reconciled with the prior playoff stat line so offseason trades and signings appear under the right team
 - **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
 - **WebSocket push** — live prediction events emitted to all connected clients every 3 seconds
 - **Light/dark theme** — toggle in the topbar, respects system preference by default, persisted in `localStorage`
@@ -166,6 +166,12 @@ This project uses the following **public, unauthenticated** data sources. No API
   - `nba_api.stats.endpoints.playoffpicture` — playoff bracket picture
   - `nba_api.stats.endpoints.leaguegamelog` — real per-game results, used to reconstruct head-to-head matchup history
 - **Data owner:** NBA Stats (`stats.nba.com`) — data is property of the NBA. Use is subject to [NBA Terms of Use](https://www.nba.com/tos).
+
+### ESPN current rosters
+
+- **Endpoint:** `site.api.espn.com/apis/site/v2/sports/basketball/nba/teams/<team>/roster`
+- **Usage:** the current roster snapshot is refreshed hourly and is authoritative for player-team membership; NBA Stats remains the source for the player's prior-season playoff performance
+- **Failure behavior:** roster reconciliation is all-or-nothing, so a partial upstream response cannot make a team disappear from the dashboard
 
 ### ESPN Public APIs
 
