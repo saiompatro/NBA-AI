@@ -8,6 +8,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 
 ## Features
 
+- **Season-phase aware stats** — team/player stat queries use the regular season from opening night until the playoffs start (mid-April) and the playoffs from then through the off-season, so a new season shows real numbers instead of fallbacks
 - **Live scoreboard** — detects active NBA games via `nba_api` and polls every 3 seconds
 - **Play-by-play tracker** — score, possession, latest event, shot context, shot quality, and win probability
 - **Live box score** — top scorers per team (points, rebounds, assists, steals, blocks, +/-) pulled from the NBA CDN boxscore feed

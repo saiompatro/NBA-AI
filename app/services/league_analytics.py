@@ -210,6 +210,10 @@ NEGATIVE_WORDS = {
     "eliminated",
 }
 
+# The first round tips off in mid-to-late April (April 18 in 2026); before this day
+# of April the regular season (and play-in) is still the live data set.
+_PLAYOFFS_START_DAY_OF_APRIL = 18
+
 PLAYOFF_SEEDS_2026 = [
     {"conference": "Eastern", "seed": 1, "team": "Detroit Pistons", "abbr": "DET", "team_id": 1610612765, "wins": 60, "losses": 22, "primary": "#1d428a", "secondary": "#c8102e"},
     {"conference": "Eastern", "seed": 2, "team": "Boston Celtics", "abbr": "BOS", "team_id": 1610612738, "wins": 56, "losses": 26, "primary": "#007a33", "secondary": "#ba9653"},
@@ -314,7 +318,7 @@ class LeagueAnalyticsService:
     def playoff_teams(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashteamstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, current_season_type(), "PerGame"),
             "LeagueDashTeamStats",
         )
         stats_by_id: dict[int, dict[str, Any]] = {}
@@ -402,7 +406,7 @@ class LeagueAnalyticsService:
         Stats, Cleaning the Glass) lead with these per-possession numbers instead of raw
         per-game counting stats, which is what we had until now.
         """
-        params = common_dash_params(season, "Playoffs", "PerGame")
+        params = common_dash_params(season, current_season_type(), "PerGame")
         params["MeasureType"] = "Advanced"
         frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
         if frame.empty:
@@ -420,7 +424,7 @@ class LeagueAnalyticsService:
         own "Clutch" tab shows - see the `_CLUTCH_TIME` comment above for why it's worth
         having next to the season-long advanced stats.
         """
-        params = common_dash_params(season, "Playoffs", "PerGame")
+        params = common_dash_params(season, current_season_type(), "PerGame")
         params["AheadBehind"] = "Ahead or Behind"
         params["ClutchTime"] = _CLUTCH_TIME
         params["PointDiff"] = _CLUTCH_POINT_DIFF
@@ -522,7 +526,7 @@ class LeagueAnalyticsService:
         `Location` filter on the same leaguedashteamstats endpoint we already poll."""
         splits: dict[str, dict[int, float]] = {"home": {}, "road": {}}
         for key, location in (("home", "Home"), ("road", "Road")):
-            params = common_dash_params(season, "Playoffs", "PerGame")
+            params = common_dash_params(season, current_season_type(), "PerGame")
             params["Location"] = location
             frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
             if frame.empty or "PLUS_MINUS" not in frame:
@@ -612,7 +616,7 @@ class LeagueAnalyticsService:
     def playoff_players(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashplayerstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, current_season_type(), "PerGame"),
             "LeagueDashPlayerStats",
         )
         current_roster = self._espn_rotation_players(news)
@@ -683,7 +687,7 @@ class LeagueAnalyticsService:
                             [player["player"], player["team"], player["team_name"]],
                             plus_minus,
                         ),
-                        "stats_source": f"NBA Stats {season} playoffs",
+                        "stats_source": f"NBA Stats {season} {current_season_type().lower()}",
                     }
                 )
 
@@ -750,7 +754,7 @@ class LeagueAnalyticsService:
         """True-shooting%, usage%, and Player Impact Estimate per player (NBA Stats
         MeasureType=Advanced) - see the module comment above `playoff_players` for why
         this is worth having next to the raw per-game box totals."""
-        params = common_dash_params(season, "Playoffs", "PerGame")
+        params = common_dash_params(season, current_season_type(), "PerGame")
         params["MeasureType"] = "Advanced"
         frame = self._stats_frame("leaguedashplayerstats", params, "LeagueDashPlayerStats")
         if frame.empty:
@@ -764,9 +768,10 @@ class LeagueAnalyticsService:
         """Real per-game boxscore log (most recent first), playoffs first with a
         regular-season fallback so the panel still has content in the off-season
         gap between a player's team getting eliminated and the next tip-off."""
-        frame = self._player_game_log_frame(player_id, season, "Playoffs")
+        primary, secondary = _season_type_order()
+        frame = self._player_game_log_frame(player_id, season, primary)
         if frame.empty:
-            frame = self._player_game_log_frame(player_id, season, "Regular Season")
+            frame = self._player_game_log_frame(player_id, season, secondary)
         if frame.empty:
             return []
 
@@ -806,11 +811,11 @@ class LeagueAnalyticsService:
         """Every real shot attempt (make + miss) for a player this season, mapped to
         court coordinates, plus a per-zone FG% breakdown vs. league average. Playoffs
         first with a Regular Season fallback - same pattern as `player_game_log`."""
-        season_type = "Playoffs"
+        season_type, secondary_type = _season_type_order()
         frames = self._shot_chart_frames(player_id, season, season_type)
         shots_frame = frames.get("Shot_Chart_Detail", pd.DataFrame())
         if shots_frame.empty:
-            season_type = "Regular Season"
+            season_type = secondary_type
             frames = self._shot_chart_frames(player_id, season, season_type)
             shots_frame = frames.get("Shot_Chart_Detail", pd.DataFrame())
         if shots_frame.empty:
@@ -1618,7 +1623,7 @@ class LeagueAnalyticsService:
     def player_analysis(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashplayerstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, current_season_type(), "PerGame"),
             "LeagueDashPlayerStats",
         )
         if frame.empty:
@@ -1658,7 +1663,7 @@ class LeagueAnalyticsService:
     def team_analysis(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashteamstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, current_season_type(), "PerGame"),
             "LeagueDashTeamStats",
         )
         if frame.empty:
@@ -1930,6 +1935,28 @@ def current_season(today: date | None = None) -> str:
     today = today or date.today()
     start_year = today.year if today.month >= 10 else today.year - 1
     return f"{start_year}-{str(start_year + 1)[-2:]}"
+
+
+def current_season_type(today: date | None = None) -> str:
+    """NBA Stats `SeasonType` that has real data for `current_season()` right now.
+
+    The dashboard was built during the 2026 playoffs and asked for "Playoffs" rows
+    unconditionally. Once a new season tips off (October) `current_season()` rolls
+    forward, and that season has no playoff rows until mid-April - so every stat
+    query came back empty and the UI silently showed fallback numbers. Use the
+    regular season from opening night until the playoffs start, and the playoffs
+    from then through the off-season (when `current_season()` still names the
+    season that just finished).
+    """
+    today = today or date.today()
+    in_regular_season = today.month >= 10 or today.month <= 3 or (today.month == 4 and today.day < _PLAYOFFS_START_DAY_OF_APRIL)
+    return "Regular Season" if in_regular_season else "Playoffs"
+
+
+def _season_type_order(today: date | None = None) -> tuple[str, str]:
+    """(preferred, fallback) season types for per-player lookups."""
+    primary = current_season_type(today)
+    return primary, ("Playoffs" if primary == "Regular Season" else "Regular Season")
 
 
 def season_id(season: str) -> str:
