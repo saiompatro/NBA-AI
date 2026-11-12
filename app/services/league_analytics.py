@@ -140,6 +140,9 @@ _ELO_EDGE_CAP = 3.0           # hard cap on total margin swing from the Elo sign
 
 # Player shot charts use the NBA Stats endpoint's native zone names, while team
 # profiles collapse the two corner-three buckets into one five-zone summary.
+# Cap on the raw shot list sent to the browser (a full season can be 1000+ attempts);
+# the zone table already summarizes the complete sample.
+_SHOT_CHART_MAX_POINTS = 1200
 SHOT_ZONE_ORDER = [
     "Restricted Area",
     "In The Paint (Non-RA)",
@@ -304,6 +307,7 @@ class LeagueAnalyticsService:
                 "NBA Stats API scoreboardv3",
                 "NBA Stats API leaguedashplayerstats",
                 "NBA Stats API leaguedashteamstats",
+                "NBA Stats API leaguedashteamshotlocations",
                 "NBA Stats API leaguestandingsv3",
                 "ESPN current team roster API",
                 "ESPN public scoreboard/news API",
@@ -330,6 +334,7 @@ class LeagueAnalyticsService:
 
         advanced_by_id = self._advanced_team_stats(season)
         clutch_by_id = self._clutch_team_stats(season)
+        shot_zone_by_id = self._shot_zone_team_stats(season)
         standings_by_id = self._league_standings_frame(season)
 
         rows = []
@@ -347,6 +352,10 @@ class LeagueAnalyticsService:
             fallback_clutch = clutch_fallback(plus_minus)
             fga = float(stats.get("FGA", 0))
             ftr = round(float(stats.get("FTA", 0)) / fga * 100, 1) if fga else fallback_adv["ftr"]
+            efg_pct = round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"]
+            zone_totals = shot_zone_by_id.get(int(team["team_id"]))
+            shot_profile = shot_zone_profile(zone_totals) if zone_totals else shot_zone_fallback(efg_pct)
+            three_rate = round(sum(row["freq"] for row in shot_profile if row["key"] in ("corner3", "atb3")), 1)
 
             # `leaguestandingsv3` real record/L10/streak/games-back for this team, when
             # reachable - replaces the `simulated_last10`/`streak_from_net` stand-ins
@@ -433,6 +442,40 @@ class LeagueAnalyticsService:
             return {}
         for column in ["TEAM_ID", "W", "L", "PLUS_MINUS"]:
             if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+        return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
+
+    def _shot_location_frame(self, season: str) -> pd.DataFrame:
+        """Raw `leaguedashteamshotlocations` frame. Not a `_stats_frame` call: this
+        endpoint's response shape needs the dedicated two-tier header parser
+        (`parse_shot_location_columns`)."""
+        try:
+            params = common_dash_params(season, current_season_type(), "Totals")
+            params["DistanceRange"] = "By Zone"
+            response = requests.get(
+                "https://stats.nba.com/stats/leaguedashteamshotlocations",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_set = response.json().get("resultSets", {})
+            columns = parse_shot_location_columns(result_set.get("headers", []))
+            if not columns:
+                return pd.DataFrame()
+            return pd.DataFrame(result_set.get("rowSet", []), columns=columns)
+        except Exception:
+            return pd.DataFrame()
+
+    @lru_cache(maxsize=4)
+    def _shot_zone_team_stats(self, season: str) -> dict[int, dict[str, Any]]:
+        """Per-team shot-location zone totals (FGM/FGA per zone), see `shot_zone_profile`."""
+        frame = self._shot_location_frame(season)
+        if frame.empty or "TEAM_ID" not in frame:
+            return {}
+        for column in frame.columns:
+            if column != "TEAM_NAME":
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
