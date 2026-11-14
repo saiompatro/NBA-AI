@@ -48,6 +48,11 @@ _IMPACT_TO_POINTS = 0.12       # a ~30-impact star out ≈ 3.6 pts of margin
 _INJURY_POINTS_CAP = 7.0       # hard cap on total margin swing per team
 _INJURY_MIN_MINUTES = 18.0     # only rotation players move the needle
 
+# The playoffs proper (after the play-in) have started between Apr 15 and Apr 22 in
+# every 82-game season; before this day of April the current season only has
+# regular-season data. See `active_season_type`.
+_PLAYOFFS_START_DAY_IN_APRIL = 18
+
 # Shared, news-driven injury watcher reused across pre-game predictions.
 # (LeagueAnalyticsService is a frozen dataclass, so this lives at module scope.)
 _INJURY_WATCH = InjuryNewsWatch()
@@ -137,6 +142,10 @@ _ELO_SEASONS_OF_HISTORY = 3   # how many seasons back to replay before trusting 
 _ELO_POINTS_PER_MARGIN = 25.0  # empirical NBA conversion: ~25 Elo points ~= 1 pt of scoring margin
 _ELO_EDGE_WEIGHT = 0.5        # Elo is a second opinion alongside net rating, not a replacement
 _ELO_EDGE_CAP = 3.0           # hard cap on total margin swing from the Elo signal
+
+# Caps the raw shot list sent to the browser (a full season can be 1000+ attempts);
+# the zone table already summarizes the complete sample.
+_SHOT_CHART_MAX_POINTS = 1200
 
 # Player shot charts use the NBA Stats endpoint's native zone names, while team
 # profiles collapse the two corner-three buckets into one five-zone summary.
@@ -314,7 +323,7 @@ class LeagueAnalyticsService:
     def playoff_teams(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashteamstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, active_season_type(), "PerGame"),
             "LeagueDashTeamStats",
         )
         stats_by_id: dict[int, dict[str, Any]] = {}
@@ -327,20 +336,28 @@ class LeagueAnalyticsService:
         advanced_by_id = self._advanced_team_stats(season)
         clutch_by_id = self._clutch_team_stats(season)
         standings_by_id = self._league_standings_frame(season)
+        shot_zone_by_id = self._shot_zone_team_stats(season)
 
+        in_playoffs = active_season_type() == "Playoffs"
         rows = []
         for team in PLAYOFF_SEEDS_2026:
             stats = stats_by_id.get(int(team["team_id"]), {})
             wins = int(team["wins"])
             losses = int(team["losses"])
-            playoff_wins = int(stats.get("W", 0))
-            playoff_losses = int(stats.get("L", 0))
+            # `stats` is regular-season data outside the postseason window, so its W/L
+            # must not be reported as a playoff record.
+            playoff_wins = int(stats.get("W", 0)) if in_playoffs else 0
+            playoff_losses = int(stats.get("L", 0)) if in_playoffs else 0
             plus_minus = round(float(stats.get("PLUS_MINUS", seed_net_rating(team["seed"]))), 1)
             sentiment = self._sentiment_for_terms(news, [team["team"], team["abbr"]], plus_minus)
             adv = advanced_by_id.get(int(team["team_id"]))
             fallback_adv = advanced_fallback(plus_minus)
             clutch = clutch_by_id.get(int(team["team_id"]))
             fallback_clutch = clutch_fallback(plus_minus)
+            efg_pct = round(float(adv["EFG_PCT"]) * 100, 1) if adv else fallback_adv["efg_pct"]
+            zone_totals = shot_zone_by_id.get(int(team["team_id"]))
+            shot_profile = shot_zone_profile(zone_totals) if zone_totals else shot_zone_fallback(efg_pct)
+            three_rate = round(sum(row["freq"] for row in shot_profile if row["key"] in ("corner3", "atb3")), 1)
             fga = float(stats.get("FGA", 0))
             ftr = round(float(stats.get("FTA", 0)) / fga * 100, 1) if fga else fallback_adv["ftr"]
 
@@ -386,7 +403,7 @@ class LeagueAnalyticsService:
                     "ftr": ftr,
                     "clutch_record": f"{int(clutch['W'])}-{int(clutch['L'])}" if clutch else fallback_clutch["clutch_record"],
                     "clutch_net": round(float(clutch["PLUS_MINUS"]), 1) if clutch else fallback_clutch["clutch_net"],
-                    "last10": real_l10 if real_l10 else simulated_last10(playoff_wins, playoff_losses),
+                    "last10": real_l10 if real_l10 else simulated_last10(int(stats.get("W", 0)), int(stats.get("L", 0))),
                     "streak": standings_streak_label(standings_row.get("CurrentStreak"), standings_row.get("strCurrentStreak", "")) if standings_row else streak_from_net(plus_minus),
                     "sentiment": sentiment,
                     "shot_profile": shot_profile,
@@ -402,13 +419,47 @@ class LeagueAnalyticsService:
         Stats, Cleaning the Glass) lead with these per-possession numbers instead of raw
         per-game counting stats, which is what we had until now.
         """
-        params = common_dash_params(season, "Playoffs", "PerGame")
+        params = common_dash_params(season, active_season_type(), "PerGame")
         params["MeasureType"] = "Advanced"
         frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
         if frame.empty:
             return {}
         for column in ["TEAM_ID", "OFF_RATING", "DEF_RATING", "PACE", "EFG_PCT", "TS_PCT", "TM_TOV_PCT", "OREB_PCT"]:
             if column in frame:
+                frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
+        return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
+
+    def _shot_location_frame(self, season: str) -> pd.DataFrame:
+        """Raw `leaguedashteamshotlocations` frame. Not a `_stats_frame` call: this
+        endpoint's response shape needs the dedicated two-tier header parser
+        (`parse_shot_location_columns`)."""
+        try:
+            params = common_dash_params(season, active_season_type(), "Totals")
+            params["DistanceRange"] = "By Zone"
+            response = requests.get(
+                "https://stats.nba.com/stats/leaguedashteamshotlocations",
+                params=params,
+                headers=NBAStatsHTTP.headers,
+                timeout=self.timeout,
+                verify=False,
+            )
+            response.raise_for_status()
+            result_set = response.json().get("resultSets", {})
+            columns = parse_shot_location_columns(result_set.get("headers", []))
+            if not columns:
+                return pd.DataFrame()
+            return pd.DataFrame(result_set.get("rowSet", []), columns=columns)
+        except Exception:
+            return pd.DataFrame()
+
+    @lru_cache(maxsize=4)
+    def _shot_zone_team_stats(self, season: str) -> dict[int, dict[str, Any]]:
+        """Per-team shot-location zone totals (FGM/FGA per zone), see `shot_zone_profile`."""
+        frame = self._shot_location_frame(season)
+        if frame.empty:
+            return {}
+        for column in frame.columns:
+            if column != "TEAM_NAME":
                 frame[column] = pd.to_numeric(frame[column], errors="coerce").fillna(0)
         return {int(row["TEAM_ID"]): row for row in frame.to_dict("records") if int(row.get("TEAM_ID", 0)) in TEAM_BY_ID}
 
@@ -420,7 +471,7 @@ class LeagueAnalyticsService:
         own "Clutch" tab shows - see the `_CLUTCH_TIME` comment above for why it's worth
         having next to the season-long advanced stats.
         """
-        params = common_dash_params(season, "Playoffs", "PerGame")
+        params = common_dash_params(season, active_season_type(), "PerGame")
         params["AheadBehind"] = "Ahead or Behind"
         params["ClutchTime"] = _CLUTCH_TIME
         params["PointDiff"] = _CLUTCH_POINT_DIFF
@@ -522,7 +573,7 @@ class LeagueAnalyticsService:
         `Location` filter on the same leaguedashteamstats endpoint we already poll."""
         splits: dict[str, dict[int, float]] = {"home": {}, "road": {}}
         for key, location in (("home", "Home"), ("road", "Road")):
-            params = common_dash_params(season, "Playoffs", "PerGame")
+            params = common_dash_params(season, active_season_type(), "PerGame")
             params["Location"] = location
             frame = self._stats_frame("leaguedashteamstats", params, "LeagueDashTeamStats")
             if frame.empty or "PLUS_MINUS" not in frame:
@@ -612,7 +663,7 @@ class LeagueAnalyticsService:
     def playoff_players(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashplayerstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, active_season_type(), "PerGame"),
             "LeagueDashPlayerStats",
         )
         current_roster = self._espn_rotation_players(news)
@@ -635,6 +686,7 @@ class LeagueAnalyticsService:
             + frame.get("PLUS_MINUS", 0) * 0.4
         )
         advanced_by_player = self._advanced_player_stats(season)
+        stats_source_label = "playoffs" if active_season_type() == "Playoffs" else "regular season"
 
         # A completed season's playoff rows retain the team a player represented in
         # those playoffs.  During the summer that is historical data, not a current
@@ -683,7 +735,7 @@ class LeagueAnalyticsService:
                             [player["player"], player["team"], player["team_name"]],
                             plus_minus,
                         ),
-                        "stats_source": f"NBA Stats {season} playoffs",
+                        "stats_source": f"NBA Stats {season} {stats_source_label}",
                     }
                 )
 
@@ -750,7 +802,7 @@ class LeagueAnalyticsService:
         """True-shooting%, usage%, and Player Impact Estimate per player (NBA Stats
         MeasureType=Advanced) - see the module comment above `playoff_players` for why
         this is worth having next to the raw per-game box totals."""
-        params = common_dash_params(season, "Playoffs", "PerGame")
+        params = common_dash_params(season, active_season_type(), "PerGame")
         params["MeasureType"] = "Advanced"
         frame = self._stats_frame("leaguedashplayerstats", params, "LeagueDashPlayerStats")
         if frame.empty:
@@ -1618,7 +1670,7 @@ class LeagueAnalyticsService:
     def player_analysis(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashplayerstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, active_season_type(), "PerGame"),
             "LeagueDashPlayerStats",
         )
         if frame.empty:
@@ -1658,7 +1710,7 @@ class LeagueAnalyticsService:
     def team_analysis(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frame = self._stats_frame(
             "leaguedashteamstats",
-            common_dash_params(season, "Playoffs", "PerGame"),
+            common_dash_params(season, active_season_type(), "PerGame"),
             "LeagueDashTeamStats",
         )
         if frame.empty:
@@ -1930,6 +1982,20 @@ def current_season(today: date | None = None) -> str:
     today = today or date.today()
     start_year = today.year if today.month >= 10 else today.year - 1
     return f"{start_year}-{str(start_year + 1)[-2:]}"
+
+
+def active_season_type(today: date | None = None) -> str:
+    """NBA Stats `SeasonType` that holds the numbers for `current_season()` right now.
+
+    `current_season()` rolls over in October, so from then until the playoffs tip off
+    in mid-April the only data that exists for it is regular-season data - asking for
+    "Playoffs" returns nothing and every stat silently drops to seed-based estimates.
+    From the start of the playoffs through the offseason (until the October rollover)
+    the season's playoff numbers are the freshest picture, as before.
+    """
+    today = today or date.today()
+    in_postseason_window = (today.month == 4 and today.day >= _PLAYOFFS_START_DAY_IN_APRIL) or 5 <= today.month <= 9
+    return "Playoffs" if in_postseason_window else "Regular Season"
 
 
 def season_id(season: str) -> str:
