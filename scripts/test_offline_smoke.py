@@ -25,6 +25,7 @@ if str(ROOT) not in sys.path:
 from app.services import league_analytics  # noqa: E402
 from app.services.league_analytics import (  # noqa: E402
     PLAYOFF_SEEDS_2026,
+    TRACKED_TEAMS,
     LeagueAnalyticsService,
     current_season,
 )
@@ -43,7 +44,7 @@ def test_teams_and_rankings_render_from_fallbacks() -> None:
         service = LeagueAnalyticsService()
         teams = service.playoff_teams(current_season(), [])
         rankings = service.power_rankings(current_season(), [])
-    assert len(teams) == len(PLAYOFF_SEEDS_2026)
+    assert len(teams) == len(TRACKED_TEAMS) == 30
     for team in teams:
         assert isinstance(team["efg_pct"], float)
         zones = team["shot_profile"]

@@ -254,7 +254,7 @@ function renderKpis() {
     return gameDate === new Date().toDateString();
   }).length;
   const cards = [
-    { icon: "trophy", tone: "#fff4d9", color: "#f7a614", value: "16", label: "Playoff Teams" },
+    { icon: "trophy", tone: "#fff4d9", color: "#f7a614", value: (state.analytics?.teams || []).length || 30, label: "Teams Tracked" },
     { icon: "calendar", tone: "#eaf1ff", color: "#075ed9", value: state.live?.is_live ? "1" : "--", label: "Live Games" },
     { icon: "ball", tone: "#fff0e8", color: "#f26b1d", value: gamesToday, label: "Games Today" },
     { icon: "trend", tone: "#ffeee7", color: "#f26b1d", value: state.modelPerformance?.accuracy != null ? `${(state.modelPerformance.accuracy * 100).toFixed(1)}%` : "--", label: "Model Accuracy" },
@@ -568,7 +568,7 @@ function renderSentiment() {
 }
 
 function renderFilter() {
-  const options = [`<option value="ALL">All Playoff Teams</option>`]
+  const options = [`<option value="ALL">All Teams</option>`]
     .concat((state.analytics.teams || []).map((team) => `<option value="${team.abbr}">${team.team}</option>`));
   els.playerTeamFilter.innerHTML = options.join("");
   els.playerTeamFilter.value = state.playerFilter;
@@ -1681,7 +1681,7 @@ function renderPowerRankingsPage() {
 
   const rows = state.powerRankings;
   els.powerRankingsPage.innerHTML = `
-    <div class="page-heading"><div><h1>Power Rankings</h1><p>All 16 playoff teams ranked by net rating blended with last-10 form, not raw record.</p></div></div>
+    <div class="page-heading"><div><h1>Power Rankings</h1><p>Every team ranked by net rating blended with last-10 form, not raw record.</p></div></div>
     <article class="panel">
       <div class="table-wrap">
         <table>
@@ -1913,7 +1913,7 @@ function renderLandscapePage() {
     <div class="page-heading">
       <div>
         <h1>League Efficiency Landscape</h1>
-        <p>All 16 playoff teams plotted two stats at a time, split into quadrants by the league average.</p>
+        <p>Every team plotted two stats at a time, split into quadrants by the league average.</p>
       </div>
     </div>
     <article class="panel landscape-panel">

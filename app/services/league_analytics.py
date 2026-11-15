@@ -236,10 +236,37 @@ PLAYOFF_SEEDS_2026 = [
     {"conference": "Western", "seed": 8, "team": "Phoenix Suns", "abbr": "PHX", "team_id": 1610612756, "wins": 45, "losses": 37, "primary": "#1d1160", "secondary": "#e56020"},
 ]
 
-TEAM_BY_ID = {team["team_id"]: team for team in PLAYOFF_SEEDS_2026}
-TEAM_BY_ABBR = {team["abbr"]: team for team in PLAYOFF_SEEDS_2026}
-ESPN_TEAM_CODES = {"NYK": "ny", "SAS": "sa", "PHX": "phx"}
-SCHEDULE_TEAM_ALIASES = {"NY": "NYK", "SA": "SAS"}
+# The 14 clubs that missed the 2026 playoff bracket, with their final 2025-26
+# conference finish and record. During the regular season every franchise is
+# live, so these join the tracked set instead of being dropped from schedules,
+# predictions, rosters and team pages. "seed" here is last season's conference
+# finish; playoff_teams() replaces it with the current standings rank whenever
+# NBA Stats is reachable.
+NON_PLAYOFF_TEAMS_2026 = [
+    {"conference": "Eastern", "seed": 9, "team": "Charlotte Hornets", "abbr": "CHA", "team_id": 1610612766, "wins": 44, "losses": 38, "primary": "#1d1160", "secondary": "#00788c"},
+    {"conference": "Eastern", "seed": 10, "team": "Miami Heat", "abbr": "MIA", "team_id": 1610612748, "wins": 43, "losses": 39, "primary": "#98002e", "secondary": "#f9a01b"},
+    {"conference": "Eastern", "seed": 11, "team": "Milwaukee Bucks", "abbr": "MIL", "team_id": 1610612749, "wins": 32, "losses": 50, "primary": "#00471b", "secondary": "#eee1c6"},
+    {"conference": "Eastern", "seed": 12, "team": "Chicago Bulls", "abbr": "CHI", "team_id": 1610612741, "wins": 31, "losses": 51, "primary": "#ce1141", "secondary": "#000000"},
+    {"conference": "Eastern", "seed": 13, "team": "Brooklyn Nets", "abbr": "BKN", "team_id": 1610612751, "wins": 20, "losses": 62, "primary": "#000000", "secondary": "#777d84"},
+    {"conference": "Eastern", "seed": 14, "team": "Indiana Pacers", "abbr": "IND", "team_id": 1610612754, "wins": 19, "losses": 63, "primary": "#002d62", "secondary": "#fdbb30"},
+    {"conference": "Eastern", "seed": 15, "team": "Washington Wizards", "abbr": "WAS", "team_id": 1610612764, "wins": 17, "losses": 65, "primary": "#002b5c", "secondary": "#e31837"},
+    {"conference": "Western", "seed": 9, "team": "LA Clippers", "abbr": "LAC", "team_id": 1610612746, "wins": 42, "losses": 40, "primary": "#c8102e", "secondary": "#1d428a"},
+    {"conference": "Western", "seed": 10, "team": "Golden State Warriors", "abbr": "GSW", "team_id": 1610612744, "wins": 37, "losses": 45, "primary": "#1d428a", "secondary": "#ffc72c"},
+    {"conference": "Western", "seed": 11, "team": "New Orleans Pelicans", "abbr": "NOP", "team_id": 1610612740, "wins": 26, "losses": 56, "primary": "#0c2340", "secondary": "#c8102e"},
+    {"conference": "Western", "seed": 12, "team": "Dallas Mavericks", "abbr": "DAL", "team_id": 1610612742, "wins": 26, "losses": 56, "primary": "#00538c", "secondary": "#b8c4ca"},
+    {"conference": "Western", "seed": 13, "team": "Memphis Grizzlies", "abbr": "MEM", "team_id": 1610612763, "wins": 25, "losses": 57, "primary": "#5d76a9", "secondary": "#12173f"},
+    {"conference": "Western", "seed": 14, "team": "Sacramento Kings", "abbr": "SAC", "team_id": 1610612758, "wins": 22, "losses": 60, "primary": "#5a2d81", "secondary": "#63727a"},
+    {"conference": "Western", "seed": 15, "team": "Utah Jazz", "abbr": "UTA", "team_id": 1610612762, "wins": 22, "losses": 60, "primary": "#002b5c", "secondary": "#f9a01b"},
+]
+
+# Every team the dashboard tracks: all 30 franchises.
+TRACKED_TEAMS = PLAYOFF_SEEDS_2026 + NON_PLAYOFF_TEAMS_2026
+
+TEAM_BY_ID = {team["team_id"]: team for team in TRACKED_TEAMS}
+TEAM_BY_ABBR = {team["abbr"]: team for team in TRACKED_TEAMS}
+# ESPN's URL codes / scoreboard abbreviations where they differ from the NBA's.
+ESPN_TEAM_CODES = {"NYK": "ny", "SAS": "sa", "PHX": "phx", "GSW": "gs", "NOP": "no", "UTA": "utah", "WAS": "wsh"}
+SCHEDULE_TEAM_ALIASES = {"NY": "NYK", "SA": "SAS", "GS": "GSW", "NO": "NOP", "UTAH": "UTA", "WSH": "WAS"}
 
 
 @dataclass(frozen=True)
@@ -338,7 +365,7 @@ class LeagueAnalyticsService:
         standings_by_id = self._league_standings_frame(season)
 
         rows = []
-        for team in PLAYOFF_SEEDS_2026:
+        for team in TRACKED_TEAMS:
             stats = stats_by_id.get(int(team["team_id"]), {})
             wins = int(team["wins"])
             losses = int(team["losses"])
@@ -367,14 +394,19 @@ class LeagueAnalyticsService:
             row_losses = real_losses if (real_wins or real_losses) else losses
             real_l10 = str(standings_row.get("L10") or "").strip() if standings_row else ""
             real_gb = standings_row.get("ConferenceGamesBack") if standings_row else None
+            # Current conference rank replaces last season's finish as the seed.
+            live_rank = _coerce_int(standings_row.get("PlayoffRank")) if standings_row else 0
             rows.append(
                 {
                     **team,
+                    "seed": live_rank if 1 <= live_rank <= 15 else team["seed"],
+                    "wins": row_wins,
+                    "losses": row_losses,
                     "slug": slugify(team["team"]),
                     "logo": team_logo_url(int(team["team_id"])),
                     "record": f"{row_wins}-{row_losses}",
                     "pct": round(row_wins / max(row_wins + row_losses, 1), 3),
-                    "gb": format_games_back(real_gb) if real_gb not in (None, "") else games_back(team, PLAYOFF_SEEDS_2026),
+                    "gb": format_games_back(real_gb) if real_gb not in (None, "") else games_back(team, TRACKED_TEAMS),
                     "conf_record": str(standings_row.get("ConferenceRecord")) if standings_row and standings_row.get("ConferenceRecord") not in (None, "") else "-",
                     "home_record": str(standings_row.get("HOME")) if standings_row and standings_row.get("HOME") not in (None, "") else "-",
                     "road_record": str(standings_row.get("ROAD")) if standings_row and standings_row.get("ROAD") not in (None, "") else "-",
@@ -486,7 +518,7 @@ class LeagueAnalyticsService:
         This single endpoint carries wins/losses/PCT/L10/streak/games-back/
         conference-record/playoff-rank for the whole league - it's both the
         source for the new all-30-team `/api/standings` endpoint and, for the
-        16 tracked playoff teams, the real `last10`/`streak` values that
+        tracked teams, the real `last10`/`streak` values that
         `playoff_teams()` used to fabricate via `simulated_last10`/`streak_from_net`.
         """
         frame = self._stats_frame(
@@ -508,8 +540,8 @@ class LeagueAnalyticsService:
     def league_standings(self, season: str) -> dict[str, Any]:
         """Full-league (all 30 teams) regular-season standings, split east/west.
 
-        Powers `/api/standings`. Falls back to the existing 16-team
-        `PLAYOFF_SEEDS_2026` fallback data (`fallback_standings()`) when the
+        Powers `/api/standings`. Falls back to last season's final
+        records in `TRACKED_TEAMS` (`fallback_standings()`) when the
         NBA Stats API is unreachable, mirroring `fallback_playoff_table()`.
         """
         standings_by_id = self._league_standings_frame(season)
@@ -529,7 +561,7 @@ class LeagueAnalyticsService:
         }
 
     def power_rankings(self, season: str, news: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """League-wide power ranking across all 16 tracked playoff teams.
+        """League-wide power ranking across every tracked team.
 
         Competing sites (ESPN, NBA.com, The Ringer) publish power rankings that
         blend net rating with recent form instead of sorting by raw record -
@@ -735,7 +767,7 @@ class LeagueAnalyticsService:
                 )
 
             rows: list[dict[str, Any]] = []
-            for team in PLAYOFF_SEEDS_2026:
+            for team in TRACKED_TEAMS:
                 rotation = sorted(
                     (player for player in current_roster if player["team"] == team["abbr"]),
                     key=lambda player: (player.get("min", 0), player.get("gp", 0), player.get("pts", 0)),
@@ -961,7 +993,7 @@ class LeagueAnalyticsService:
         if not rosters:
             return rows
         nba_ids = nba_player_ids_by_name()
-        for team in PLAYOFF_SEEDS_2026:
+        for team in TRACKED_TEAMS:
             athletes = rosters.get(team["abbr"], [])
             for index, athlete in enumerate(athletes):
                 name = athlete.get("displayName") or athlete.get("fullName") or "Player"
@@ -1025,7 +1057,7 @@ class LeagueAnalyticsService:
         """
         rosters: dict[str, list[dict[str, Any]]] = {}
         session = requests.Session()
-        for team in PLAYOFF_SEEDS_2026:
+        for team in TRACKED_TEAMS:
             code = ESPN_TEAM_CODES.get(team["abbr"], team["abbr"].lower())
             try:
                 response = session.get(
@@ -1276,7 +1308,7 @@ class LeagueAnalyticsService:
         away_code = normalize_team_abbr(away_abbr)
         home_code = normalize_team_abbr(home_abbr)
         if home_code not in TEAM_BY_ABBR or away_code not in TEAM_BY_ABBR:
-            return _h2h_failure(home_code, away_code, "That matchup is not available in the playoff model yet.", generated_at)
+            return _h2h_failure(home_code, away_code, "That matchup is not available in the model yet.", generated_at)
 
         seasons = _recent_seasons(seasons_back)
         games: list[dict[str, Any]] = []
@@ -1336,7 +1368,7 @@ class LeagueAnalyticsService:
         if not away_seed or not home_seed:
             return {
                 "ok": False,
-                "message": "That matchup is not available in the playoff model yet.",
+                "message": "That matchup is not available in the model yet.",
                 "generated_at": datetime.now(timezone.utc).isoformat(),
             }
 
@@ -2152,11 +2184,16 @@ def games_back(team: dict[str, Any], teams: list[dict[str, Any]]) -> str:
 
 
 def seed_points(seed: int) -> float:
-    return 118.0 - seed * 1.8
+    """Stand-in points per game from a conference rank (1-15) when NBA Stats is down."""
+    return 118.0 - min(seed, 8) * 1.8 - max(seed - 8, 0) * 0.5
 
 
 def seed_net_rating(seed: int) -> float:
-    return round(10.0 - seed * 2.1, 1)
+    """Stand-in net rating from a conference rank (1-15) when NBA Stats is down.
+
+    Ranks 1-8 keep the original playoff-field slope; ranks 9-15 flatten out so a
+    lottery team reads as bad (-7 to -11) rather than impossibly bad (-21)."""
+    return round(10.0 - min(seed, 8) * 2.1 - max(seed - 8, 0) * 0.6, 1)
 
 
 def advanced_fallback(net_rating: float) -> dict[str, float]:
@@ -2658,8 +2695,8 @@ def all_team_meta() -> dict[int, dict[str, Any]]:
     """Team id -> {abbr, team, slug, logo} for all 30 NBA franchises.
 
     `nba_api.stats.static.teams.get_teams()` is a bundled offline list (no
-    network call) - used here instead of the 16-team `TEAM_BY_ID` so the
-    full-league standings endpoint isn't limited to the tracked playoff seeds.
+    network call) - so the
+    full-league standings endpoint has names for every franchise.
     Falls back to `TEAM_BY_ID` if the import/call ever fails.
     """
     try:
@@ -2833,20 +2870,19 @@ def normalize_standings_rows(records: list[dict[str, Any]]) -> dict[str, list[di
 
 
 def fallback_standings() -> dict[str, list[dict[str, Any]]]:
-    """All-30-team standings shape built only from the existing 16-team
-    `PLAYOFF_SEEDS_2026` fallback data, used when NBA Stats is unreachable.
-    Mirrors `fallback_playoff_table()` - does not invent data for the other
-    14 franchises, and reuses `simulated_last10`/`streak_from_net` for the
-    same fields `playoff_teams()` falls back to."""
+    """All-30-team standings built from last season's final records in
+    `TRACKED_TEAMS`, used when NBA Stats is unreachable. Reuses
+    `simulated_last10`/`streak_from_net` for the same fields `playoff_teams()`
+    falls back to."""
     east: list[dict[str, Any]] = []
     west: list[dict[str, Any]] = []
-    for team in PLAYOFF_SEEDS_2026:
+    for team in TRACKED_TEAMS:
         wins = int(team["wins"])
         losses = int(team["losses"])
         net = seed_net_rating(team["seed"])
         conference = "East" if team["conference"] == "Eastern" else "West"
         rank = int(team["seed"])
-        status = "Playoff spot" if rank <= 6 else "Play-In"
+        status = standings_playoff_status(rank, None, None)
         row = {
             "team_id": team["team_id"],
             "abbr": team["abbr"],
@@ -2861,7 +2897,7 @@ def fallback_standings() -> dict[str, list[dict[str, Any]]]:
             "losses": losses,
             "record": f"{wins}-{losses}",
             "pct": round(wins / max(wins + losses, 1), 3),
-            "gb": games_back(team, PLAYOFF_SEEDS_2026),
+            "gb": games_back(team, TRACKED_TEAMS),
             "conf_record": "-",
             "home": "-",
             "road": "-",
@@ -2871,7 +2907,7 @@ def fallback_standings() -> dict[str, list[dict[str, Any]]]:
             "opp_pts_pg": round(seed_points(rank) - net, 1),
             "diff_pg": net,
             "playoff_status": status,
-            "in_playoff_field": True,
+            "in_playoff_field": rank <= 8,  # the clubs that actually made the 2026 bracket
         }
         (east if conference == "East" else west).append(row)
     for bucket in (east, west):
@@ -2905,6 +2941,7 @@ def player_trend(points: float, plus_minus: float) -> list[float]:
 
 
 def synthetic_player_stats(seed: int, rank: int) -> dict[str, float]:
+    seed = min(seed, 10)  # ranks 11-15 share the 10th-place estimate instead of sliding further
     starter_bonus = max(0, 6 - rank)
     seed_bonus = max(0, 6 - seed) * 0.45
     minutes = max(6.0, 36.0 - rank * 2.1 + starter_bonus)

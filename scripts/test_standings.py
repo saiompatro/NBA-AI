@@ -136,8 +136,8 @@ def test_normalize_standings_rows() -> None:
 
 def test_fallback_standings() -> None:
     grouped = fallback_standings()
-    assert len(grouped["east"]) == 8, "fallback covers exactly the 8 tracked Eastern seeds"
-    assert len(grouped["west"]) == 8, "fallback covers exactly the 8 tracked Western seeds"
+    assert len(grouped["east"]) == 15, "fallback covers every Eastern team"
+    assert len(grouped["west"]) == 15, "fallback covers every Western team"
     for conference_rows in grouped.values():
         for row in conference_rows:
             assert set(row) == _EXPECTED_ROW_KEYS, "fallback rows must match the normalized-row shape exactly"
