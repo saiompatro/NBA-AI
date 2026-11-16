@@ -1304,18 +1304,27 @@ function renderMatchupPage(away, home) {
     `;
   }).join("");
 
-  const awayOut = result.injuries?.away?.players_out || [];
-  const homeOut = result.injuries?.home?.players_out || [];
+  // Prefer the detailed rows (status + injury) and fall back to bare names.
+  const outLabels = (side) => {
+    const details = side?.details || [];
+    if (!details.length) return side?.players_out || [];
+    return details.map((row) => {
+      const note = [row.status, row.injury].filter(Boolean).join(", ");
+      return note ? `${row.player} (${note})` : row.player;
+    });
+  };
+  const awayOut = outLabels(result.injuries?.away);
+  const homeOut = outLabels(result.injuries?.home);
   const injuryContent = awayOut.length || homeOut.length
     ? `
       <div class="matchup-grid">
         <div>
-          <h4>${html(away)} out</h4>
-          ${awayOut.length ? `<ul>${awayOut.map((player) => `<li>${html(player)}</li>`).join("")}</ul>` : `<p class="footer-note">No players out.</p>`}
+          <h4>${html(away)} injuries</h4>
+          ${awayOut.length ? `<ul>${awayOut.map((player) => `<li>${html(player)}</li>`).join("")}</ul>` : `<p class="footer-note">No rotation players listed.</p>`}
         </div>
         <div>
-          <h4>${html(home)} out</h4>
-          ${homeOut.length ? `<ul>${homeOut.map((player) => `<li>${html(player)}</li>`).join("")}</ul>` : `<p class="footer-note">No players out.</p>`}
+          <h4>${html(home)} injuries</h4>
+          ${homeOut.length ? `<ul>${homeOut.map((player) => `<li>${html(player)}</li>`).join("")}</ul>` : `<p class="footer-note">No rotation players listed.</p>`}
         </div>
       </div>
     `

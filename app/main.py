@@ -106,6 +106,10 @@ def create_app() -> Flask:
         home = request.args.get("home", "")
         return jsonify(analytics.game_prediction(away, home))
 
+    @app.get("/api/injuries")
+    def injuries():
+        return jsonify(analytics.injuries(request.args.get("team", "")))
+
     @app.get("/api/head-to-head")
     def head_to_head():
         away = request.args.get("away", "")

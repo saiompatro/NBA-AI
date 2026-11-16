@@ -105,7 +105,7 @@ def test_every_api_route_answers_offline() -> None:
         "/api/scoreboard", "/api/scoreboard?date=2026-11-12", "/api/scoreboard?date=not-a-date",
         "/api/power-rankings", "/api/model-performance", f"/api/game-prediction?away={away}&home={home}",
         f"/api/head-to-head?away={away}&home={home}", "/api/players/2544/game-log", "/api/players/2544/shot-chart",
-        "/api/shot-quality", "/",
+        "/api/shot-quality", "/api/injuries", "/api/injuries?team=BOS", "/",
     ]
     with _offline():
         client = create_app().test_client()

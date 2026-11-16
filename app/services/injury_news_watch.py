@@ -25,7 +25,21 @@ _INJURY_PHRASES = [
     "knee",
     "hamstring",
     "wrist",
-    "back",
+    "back injury",
+    "back spasms",
+    "back soreness",
+    "back tightness",
+]
+
+# Headlines about a player coming back mention the same body parts.
+_RETURN_PHRASES = [
+    "returns",
+    "return to",
+    "set to return",
+    "cleared to play",
+    "back in the lineup",
+    "available to play",
+    "upgraded to available",
 ]
 
 
@@ -43,6 +57,8 @@ def _article_is_fresh(article: dict[str, Any], max_age_minutes: int = 120) -> bo
 
 def _mentions_injury_phrase(text: str) -> bool:
     lower = text.lower()
+    if any(phrase in lower for phrase in _RETURN_PHRASES):
+        return False
     return any(phrase in lower for phrase in _INJURY_PHRASES)
 
 
@@ -53,21 +69,27 @@ class InjuryNewsWatch:
         self._lock = threading.Lock()
         self._alerts: list[dict[str, Any]] = []
         self._last_fetch: float = 0.0
+        self._last_terms: tuple[str, ...] = ()
 
     def refresh(
         self,
         team_terms: list[str],
         player_terms: list[str],
         refresh_key: str = "cached",
+        max_age_minutes: int = 120,
     ) -> None:
         """Fetch news and extract injury/ejection alerts relevant to current game."""
         import time
 
         now = time.monotonic()
+        terms_key = tuple(team_terms)
         with self._lock:
-            if now - self._last_fetch < 55:
+            # Throttle repeat polls for one game, but never let a different
+            # matchup inherit the previous matchup's alerts.
+            if terms_key == self._last_terms and now - self._last_fetch < 55:
                 return
             self._last_fetch = now
+            self._last_terms = terms_key
 
         all_articles = fetch_general_pool(refresh_key)
         query = " ".join(team_terms[:2])
@@ -77,7 +99,7 @@ class InjuryNewsWatch:
         alerts: list[dict[str, Any]] = []
         all_terms = team_terms + player_terms
         for article in all_articles:
-            if not _article_is_fresh(article):
+            if not _article_is_fresh(article, max_age_minutes):
                 continue
             relevance = article_relevance(article, all_terms)
             if relevance == 0:
@@ -107,3 +129,4 @@ class InjuryNewsWatch:
         with self._lock:
             self._alerts = []
             self._last_fetch = 0.0
+            self._last_terms = ()

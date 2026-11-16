@@ -18,7 +18,7 @@ The repository ships with synthetic training data and pre-trained model artifact
 - **Live shot chart** — half-court diagram of every field-goal attempt in the live game, colored by make/miss and sized by the model's shot-quality score for that shot
 - **Playoff dashboard** — standings, schedule, team form, player leaders, sentiment, and alerts
 - **Advanced team stats** — offensive/defensive rating, pace, effective FG%, true shooting%, and turnover% per team (NBA Stats `MeasureType=Advanced`), shown on each team profile
-- **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, an Elo rating replayed from real results over the last 3 seasons (538 NBA Elo methodology), injuries, news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and the full four factors (eFG%, TOV%, OREB%, FT rate)
+- **Per-game predictions** — `Run Model` button with a plain-English explanation of the pick, factoring in team strength, an Elo rating replayed from real results over the last 3 seasons (538 NBA Elo methodology), the league injury report (status-weighted, with injury headlines as the fallback), news sentiment, rest/back-to-back schedule fatigue, recent form, home/road performance splits, and the full four factors (eFG%, TOV%, OREB%, FT rate)
 - **Player and team pages** — profile views with refreshable contextual news from ESPN
 - **Sortable players page** — rank every playoff player by PTS, REB, AST, STL, BLK, TS%, USG%, or PIE (in addition to team filtering); current ESPN rosters are reconciled with the prior playoff stat line so offseason trades and signings appear under the right team
 - **Player game log** — real last-10-game boxscore table (date, matchup, W/L, MIN/PTS/REB/AST/+/-) on every player profile, pulled live from `playergamelog` with a regular-season fallback for players without playoff minutes
@@ -118,6 +118,7 @@ The server runs in debug mode by default. Set `debug=False` in `app.py` before d
 | GET    | `/api/model-performance`                                      | Backtested accuracy/log-loss for the pre-game model |
 | GET    | `/api/game-prediction?away=DET&home=CLE`                      | Matchup prediction with plain-English summary |
 | GET    | `/api/head-to-head?away=DET&home=CLE`                         | Real head-to-head results between two teams   |
+| GET    | `/api/injuries?team=BOS`                                      | League injury report (ESPN), optionally for one team |
 | GET    | `/api/news?type=team&team=DET&term=Detroit+Pistons&refresh=1` | Contextual ESPN news                          |
 | GET    | `/api/shot-quality`                                           | Model metadata and feature importance         |
 | GET    | `/teams/<slug>`                                               | Team profile page                             |

@@ -15,6 +15,7 @@ import urllib3
 from nba_api.stats.library.http import NBAStatsHTTP
 
 from app.services import news_sources
+from app.services import injury_report
 from app.services.injury_news_watch import InjuryNewsWatch
 
 
@@ -51,6 +52,9 @@ _INJURY_MIN_MINUTES = 18.0     # only rotation players move the needle
 # Shared, news-driven injury watcher reused across pre-game predictions.
 # (LeagueAnalyticsService is a frozen dataclass, so this lives at module scope.)
 _INJURY_WATCH = InjuryNewsWatch()
+# Injury headlines stay relevant to a pre-game pick for longer than to a live game.
+_PREGAME_INJURY_NEWS_MAX_AGE_MINUTES = 36 * 60
+_NEWS_INJURY_SOURCE = "news headlines"
 
 # Rest / schedule-fatigue adjustment. Public win-probability models (FiveThirtyEight's
 # NBA Elo, Inpredictable) price in rest advantage and back-to-backs; ours didn't, even
@@ -267,6 +271,22 @@ TEAM_BY_ABBR = {team["abbr"]: team for team in TRACKED_TEAMS}
 # ESPN's URL codes / scoreboard abbreviations where they differ from the NBA's.
 ESPN_TEAM_CODES = {"NYK": "ny", "SAS": "sa", "PHX": "phx", "GSW": "gs", "NOP": "no", "UTA": "utah", "WAS": "wsh"}
 SCHEDULE_TEAM_ALIASES = {"NY": "NYK", "SA": "SAS", "GS": "GSW", "NO": "NOP", "UTAH": "UTA", "WSH": "WAS"}
+
+
+def _resolve_report_team(abbreviation: str, display_name: str) -> str:
+    """Map a team label from the injury feed onto a tracked abbreviation."""
+    abbr = normalize_team_abbr(abbreviation)
+    if abbr in TEAM_BY_ABBR:
+        return abbr
+    name = str(display_name or "").strip().lower()
+    for team in TRACKED_TEAMS:
+        if name and name == team["team"].lower():
+            return team["abbr"]
+    return ""
+
+
+# Structured league injury report; the news watcher above is the fallback.
+_INJURY_REPORT = injury_report.InjuryReport(resolve_team=_resolve_report_team)
 
 
 @dataclass(frozen=True)
@@ -1248,10 +1268,87 @@ class LeagueAnalyticsService:
         return out
 
     @staticmethod
+    def _reported_out_for_team(team: dict[str, Any], players: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Rotation players on `team` listed on the league injury report.
+
+        Each returned row carries `availability`: the share of the player's
+        impact the team is expected to be missing.  It combines how certain
+        the absence is with how much of it the team's season numbers already
+        reflect - a player who has sat out half the games so far is already
+        half priced into the net rating.
+        """
+        by_name = {
+            injury_report.normalize_player_name(player.get("player", "")): player
+            for player in players
+            if player.get("team") == team["abbr"]
+        }
+        team_games = int(team.get("wins", 0) or 0) + int(team.get("losses", 0) or 0)
+        out: list[dict[str, Any]] = []
+        for entry in _INJURY_REPORT.for_team(team["abbr"]):
+            player = by_name.get(injury_report.normalize_player_name(entry["player"]))
+            if not player or entry["weight"] <= 0:
+                continue
+            if float(player.get("min", 0) or 0) < _INJURY_MIN_MINUTES:
+                continue
+            games_played = int(player.get("gp", 0) or 0)
+            played_share = games_played / team_games if 0 < games_played <= team_games else 1.0
+            out.append(
+                {
+                    **player,
+                    "availability": round(entry["weight"] * played_share, 3),
+                    "injury_status": entry["status"],
+                    "injury": entry["injury"],
+                    "return_date": entry["return_date"],
+                }
+            )
+        return out
+
+    def _availability(
+        self, home: dict[str, Any], away: dict[str, Any], players: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str]:
+        """Missing rotation players for both sides and where that came from."""
+        if _INJURY_REPORT.available():
+            return (
+                self._reported_out_for_team(home, players),
+                self._reported_out_for_team(away, players),
+                injury_report.SOURCE_LABEL,
+            )
+        roster_names = [p["player"] for p in players if p.get("team") in (home["abbr"], away["abbr"])]
+        _INJURY_WATCH.refresh(
+            team_terms=[home["team"], home["abbr"], away["team"], away["abbr"]],
+            player_terms=roster_names[:20],
+            max_age_minutes=_PREGAME_INJURY_NEWS_MAX_AGE_MINUTES,
+        )
+        return (
+            self._out_players_for_team(home["abbr"], players),
+            self._out_players_for_team(away["abbr"], players),
+            _NEWS_INJURY_SOURCE,
+        )
+
+    @staticmethod
     def _injury_points(out_players: list[dict[str, Any]]) -> float:
         """Convert a list of out players into points-of-margin lost (capped)."""
-        total = sum(float(player.get("impact", 0) or 0) for player in out_players)
+        total = sum(
+            float(player.get("impact", 0) or 0) * float(player.get("availability", 1.0))
+            for player in out_players
+        )
         return round(min(_INJURY_POINTS_CAP, total * _IMPACT_TO_POINTS), 2)
+
+    def injuries(self, team_abbr: str = "") -> dict[str, Any]:
+        """League injury report, optionally narrowed to one team."""
+        report = _INJURY_REPORT.all()
+        wanted = normalize_team_abbr(team_abbr)
+        if wanted:
+            report = {wanted: report.get(wanted, [])} if wanted in TEAM_BY_ABBR else {}
+        teams = [
+            {"abbr": abbr, "team": TEAM_BY_ABBR[abbr]["team"], "players": report[abbr]}
+            for abbr in sorted(report)
+        ]
+        return {
+            "available": _INJURY_REPORT.available(),
+            "source": injury_report.SOURCE_LABEL,
+            "teams": teams,
+        }
 
     def _last_game_date(self, team_abbr: str, before: date) -> date | None:
         """Most recent date `team_abbr` played, searching backward from (not
@@ -1386,23 +1483,17 @@ class LeagueAnalyticsService:
         away_net = float(away.get("net", seed_net_rating(int(away["seed"]))))
         net_edge = home_net - away_net
 
-        # Injury adjustment (best-effort, news-driven). Reuses the shared
-        # InjuryNewsWatch and the per-player IMPACT score from playoff_players.
+        # Injury adjustment (best-effort): the league injury report when it is
+        # reachable, injury headlines otherwise, weighted by each player's
+        # IMPACT score from playoff_players.
         home_out: list[dict[str, Any]] = []
         away_out: list[dict[str, Any]] = []
         home_injury_pts = 0.0
         away_injury_pts = 0.0
+        injury_source = _NEWS_INJURY_SOURCE
         try:
             players = self.playoff_players(season, news)
-            roster_names = [
-                p["player"] for p in players if p.get("team") in (home["abbr"], away["abbr"])
-            ]
-            _INJURY_WATCH.refresh(
-                team_terms=[home["team"], home["abbr"], away["team"], away["abbr"]],
-                player_terms=roster_names[:20],
-            )
-            home_out = self._out_players_for_team(home["abbr"], players)
-            away_out = self._out_players_for_team(away["abbr"], players)
+            home_out, away_out, injury_source = self._availability(home, away, players)
             home_injury_pts = self._injury_points(home_out)
             away_injury_pts = self._injury_points(away_out)
         except Exception:
@@ -1611,14 +1702,17 @@ class LeagueAnalyticsService:
                 "home_court_advantage": round(hca, 2),
             },
             "injuries": {
+                "source": injury_source,
                 "home": {
                     "abbr": home["abbr"],
                     "players_out": [p.get("player", "") for p in home_out],
+                    "details": [_injury_detail(p) for p in home_out],
                     "points_lost": round(home_injury_pts, 2),
                 },
                 "away": {
                     "abbr": away["abbr"],
                     "players_out": [p.get("player", "") for p in away_out],
+                    "details": [_injury_detail(p) for p in away_out],
                     "points_lost": round(away_injury_pts, 2),
                 },
             },
@@ -2094,6 +2188,15 @@ def playoff_round_label(sort_round: int) -> str:
 
 def slugify(value: str) -> str:
     return "".join(character.lower() if character.isalnum() else "-" for character in value).strip("-").replace("--", "-")
+
+
+def _injury_detail(player: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "player": player.get("player", ""),
+        "status": player.get("injury_status", ""),
+        "injury": player.get("injury", ""),
+        "return_date": player.get("return_date", ""),
+    }
 
 
 def normalize_team_abbr(value: str) -> str:
